@@ -7,16 +7,17 @@ Versions follow two conventions:
   - 1.0.0 for the first public release
 - **Date stamps** are the MiSTer convention:
   - Each Quartus build stamps its date into the core automatically (`sys/build_id.tcl`); the OSD shows it as `vYYMMDD`.
-  - Released core files are named `Shanghai3_YYYYMMDD.rbf` in `releases/`. The MRA's `<rbf>Shanghai3</rbf>` picks up the newest one.
+  - Released core files are named `SunsoftGA9201_YYYYMMDD.rbf` in `releases/` (`Shanghai3_YYYYMMDD.rbf` up to v1.0.0). The MRA's `<rbf>SunsoftGA9201</rbf>` picks up the newest one.
 
 Each entry below gives both: version, then date stamp.
 
 ---
 
-## v1.1.0-beta1 — 20261030 (pre-release, branch `multigame`)
+## v1.1.0 — 20261030
 
-Hebereke no Popoon and Blocken. Beta: both run on a MiSTer, but no PCB of either
-game was available to compare against (Shanghai III's checks still apply).
+Hebereke no Popoon and Blocken join Shanghai III. Both run on a MiSTer and match
+MAME; no PCB of either game was available, so their speed and sound balance follow
+MAME. (Published first as the pre-release v1.1.0-beta1 with the same core file.)
 
 The core becomes a platform core for the Sunsoft GA9201 board family. The MRA
 selects the game with one byte (ioctl index 1): 0 Shanghai III, 1 Hebereke no
@@ -93,9 +94,9 @@ Popoon (`heberpop`), 2 Blocken (`blocken`).
 **Verified on hardware** (20261031, DE10-Nano, HDMI to an LED display)
 - Shanghai III, Hebereke no Popoon and Blocken all boot and play; no problems
   seen with picture, sound or controls.
-- Not yet checked: a 15 kHz CRT with the new games, and Orientation (Vertical)
-  on HDMI. No Hebereke no Popoon or Blocken PCB was available, so their speed and
-  sound balance follow MAME.
+- Orientation (Vertical CW/CCW) works on HDMI.
+- Not yet checked: the new games on a 15 kHz CRT (they use Shanghai III's video
+  timing, which is CRT-tested).
 
 ## v1.0.0 — 20261026
 
