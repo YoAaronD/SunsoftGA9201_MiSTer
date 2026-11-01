@@ -13,7 +13,10 @@ Each entry below gives both: version, then date stamp.
 
 ---
 
-## Unreleased — Hebereke no Popoon and Blocken (branch `multigame`, work in progress)
+## v1.1.0-beta1 — 20261030 (pre-release, branch `multigame`)
+
+Hebereke no Popoon and Blocken. Beta: both run on a MiSTer, but no PCB of either
+game was available to compare against (Shanghai III's checks still apply).
 
 The core becomes a platform core for the Sunsoft GA9201 board family. The MRA
 selects the game with one byte (ioctl index 1): 0 Shanghai III, 1 Hebereke no
@@ -82,8 +85,17 @@ Popoon (`heberpop`), 2 Blocken (`blocken`).
   - Z80 I/O writes identical to MAME's (first 4,642 in the board simulation, first
     318 through the full download/SDRAM path);
   - OKI through SDRAM sample-exact on both 256 KB banks with background traffic.
-- Blocken: not yet run (needs ROMs).
-- No Quartus build yet.
+- Blocken: attract mode pixel-identical to MAME (frames 900–1200, lag 8 frames);
+  sound CPU and all four OKI banks match MAME.
+
+**Build:** Quartus 17.0.2, 96 MHz, setup slack +0.928 ns, 523 / 553 M10K blocks.
+
+**Verified on hardware** (20261031, DE10-Nano, HDMI to an LED display)
+- Shanghai III, Hebereke no Popoon and Blocken all boot and play; no problems
+  seen with picture, sound or controls.
+- Not yet checked: a 15 kHz CRT with the new games, and Orientation (Vertical)
+  on HDMI. No Hebereke no Popoon or Blocken PCB was available, so their speed and
+  sound balance follow MAME.
 
 ## v1.0.0 — 20261026
 
