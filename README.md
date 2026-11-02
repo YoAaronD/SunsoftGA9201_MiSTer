@@ -10,7 +10,7 @@ A MiSTer FPGA core for Sunsoft's GA9201 arcade board family, named after the boa
 
 Shanghai III was checked against MAME and against an original Shanghai III PCB: boot, picture, gameplay and sound balance. Hebereke no Popoon and Blocken were checked against MAME (no PCB yet). The core was created with the assistance of AI tooling.
 
-**Status (v1.1.0):** all three games run on a DE10-Nano. Shanghai III was verified against an original PCB and on a CRT (15 kHz analog) and HDMI. Hebereke no Popoon and Blocken run on HDMI and match MAME; no PCBs of them were available for comparison.
+**Status (v1.1.0):** all three games run on a DE10-Nano. Shanghai III was verified against an original PCB and on a CRT (15 kHz analog) and HDMI. Hebereke no Popoon and Blocken run on HDMI and match MAME.
 
 ## Supported sets
 
@@ -55,7 +55,7 @@ Requires an SDRAM module: the games' ROMs are kept in SDRAM. Any size works.
 
 ### Blocken
 
-- MAME marks Blocken's graphics as imperfect: some zoomed graphics are drawn wrongly, and the graphics chip's rotation isn't emulated. MAME is the only reference available, so the core draws Blocken as MAME does, including those faults.
+- MAME marks Blocken's graphics as imperfect: some zoomed graphics are drawn incorrectly, and the graphics chip's rotation isn't emulated. MAME is the only reference available, so the core draws Blocken as MAME does, including those faults.
 
 ## Controls
 
