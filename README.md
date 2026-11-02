@@ -2,6 +2,10 @@
 
 ![Shanghai III running on the core: title screen and a game in progress](docs/images/hdl_video_output_2x.png)
 
+![Hebereke no Popoon running on the core: title screen and a game starting](docs/images/heberpop_2x.png)
+
+![Blocken running on the core: title screen and a game starting](docs/images/blocken_2x.png)
+
 A MiSTer FPGA core for Sunsoft's GA9201 arcade board family, named after the boards' custom graphics chip. Until v1.0.0 it was the Shanghai3 core. It re-creates the original boards in hardware logic and runs three games:
 
 - **Shanghai III** (Sunsoft, 1993), the arcade mahjong-solitaire game: 68000, GA9201 graphics blitter, YM2149 music chip, OKI M6295 sample chip.
