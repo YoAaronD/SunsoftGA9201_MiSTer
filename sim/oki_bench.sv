@@ -20,16 +20,18 @@ module oki_bench (
     output logic [7:0]  oki_dout_b,
 
     // direct ROM for oki_b, served by the testbench
-    output logic [17:0] rom_b_addr,
+    output logic [18:0] rom_b_addr,
     input  logic [7:0]  rom_b_data,
     input  logic        rom_b_ok,
 
     // background SDRAM traffic, driven by the testbench
-    input  logic [18:1] prog_addr,
+    input  logic [22:1] prog_addr,
     input  logic        prog_cs,
     output logic        prog_ok,
     input  logic        gfx_req,
-    input  logic [17:0] gfx_addr,
+    input  logic [18:0] gfx_addr,
+    input  logic [1:0]  oki_bank,       // bank select (coin control bits), for oki_a and oki_b
+    input  logic        blk_mode,       // 0: heberpop (bank[0] = ROM A18), 1: blocken (4 x 128 KB at 20000-3FFFF)
     output logic        gfx_ack,
 
     output logic signed [13:0] snd_a,
@@ -53,7 +55,13 @@ module oki_bench (
         else begin oki_acc <= oki_acc + 10'd11; ce_oki <= 1'b0; end
     end
 
-    logic [17:0] rom_a_addr;
+    logic [17:0] rom_a_addr, rom_b_chip;
+    // same bank mapping as shangha3_board.sv
+    function automatic [18:0] bank_map(input [17:0] chip);
+        if (blk_mode) bank_map = chip[17] ? {oki_bank, chip[16:0]} : {1'b0, chip};
+        else          bank_map = {oki_bank[0], chip};
+    endfunction
+    assign rom_b_addr = bank_map(rom_b_chip);
     logic [7:0]  rom_a_data;
     logic        rom_a_ok;
 
@@ -63,7 +71,7 @@ module oki_bench (
         .sound(snd_a), .sample());
     jt6295 #(.INTERPOL(0)) oki_b (.rst(reset), .clk(clk), .cen(ce_oki), .ss(1'b1),
         .wrn(oki_wrn), .din(oki_din), .dout(oki_dout_b),
-        .rom_addr(rom_b_addr), .rom_data(rom_b_data), .rom_ok(rom_b_ok),
+        .rom_addr(rom_b_chip), .rom_data(rom_b_data), .rom_ok(rom_b_ok),
         .sound(snd_b), .sample());
 
     logic [26:1] ch1_addr, ch2_addr, ch3_addr, ch4_addr;
@@ -79,10 +87,11 @@ module oki_bench (
         .ioctl_download, .ioctl_index(16'd0), .ioctl_wr, .ioctl_addr, .ioctl_dout, .ioctl_wait,
         .prog_addr, .prog_cs, .prog_data(), .prog_ok,
         .gfx_req, .gfx_addr, .gfx_ack, .gfx_data(),
-        .oki_rom_addr(rom_a_addr), .oki_rom_data(rom_a_data), .oki_rom_ok(rom_a_ok),
+        .z80_addr(16'h0), .z80_cs(1'b0), .z80_data(), .z80_ok(),
+        .oki_rom_addr(bank_map(rom_a_addr)), .oki_rom_data(rom_a_data), .oki_rom_ok(rom_a_ok),
         .ch1_addr, .ch1_req, .ch1_dout, .ch1_ready,
         .ch2_addr, .ch2_req, .ch2_dout, .ch2_ready,
-        .ch3_addr, .ch3_req, .ch3_din, .ch3_be, .ch3_rnw, .ch3_ready,
+        .ch3_addr, .ch3_req, .ch3_din, .ch3_be, .ch3_rnw, .ch3_ready, .ch3_dout,
         .ch4_addr, .ch4_req, .ch4_dout, .ch4_ready);
 
     sdram u_sdram (.init(sdram_init), .clk(clk), .doRefresh(1'b0),
