@@ -815,6 +815,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../../../rtl/shangha3_ddr_arb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../../rtl/shangha3_top.sv
 
 # Pocket platform layer
+set_global_assignment -name VERILOG_MACRO "POCKET=1"
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_tdp_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_afifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_loader.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_cram.sv

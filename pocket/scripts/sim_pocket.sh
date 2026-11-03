@@ -11,7 +11,7 @@ mkdir -p "$OBJ"
 GAME=$(python3 "$ROOT/scripts/mra_stream.py" "$MRA" "$ROMDIR" "$STREAM" | tee /dev/stderr | sed -n 's/^index 1: //p')
 GAME=$((16#${GAME:-00}))
 
-verilator --cc --exe --build -O2 -j 2 ${VFLAGS:-} \
+verilator --cc --exe --build -O2 -j 2 +define+POCKET ${VFLAGS:-} \
     -Wno-fatal -Wno-WIDTH -Wno-CASEINCOMPLETE -Wno-UNOPTFLAT -Wno-PINMISSING \
     -Wno-UNUSEDSIGNAL -Wno-UNDRIVEN -Wno-TIMESCALEMOD -Wno-INITIALDLY -Wno-MULTIDRIVEN \
     -Wno-BLKANDNBLK -Wno-LATCH -Wno-COMBDLY -Wno-SYMRSVDWORD -Wno-IMPLICIT -Wno-PINCONNECTEMPTY -Wno-DECLFILENAME -Wno-CASEX -Wno-SELRANGE \
@@ -24,7 +24,7 @@ verilator --cc --exe --build -O2 -j 2 ${VFLAGS:-} \
     "$ROOT"/ext/tv80/tv80_core.v "$ROOT"/ext/tv80/tv80_alu.v "$ROOT"/ext/tv80/tv80_mcode.v "$ROOT"/ext/tv80/tv80_reg.v \
     "$ROOT/rtl/tv80_cen.v" "$ROOT/rtl/ga9201_sound.sv" "$ROOT/rtl/ga9201_mixer.sv" \
     "$ROOT/rtl/sdram.sv" "$ROOT/rtl/shangha3_mem.sv" "$ROOT/rtl/shangha3_ddr_arb.sv" "$ROOT/rtl/shangha3_top.sv" \
-    "$ROOT/pocket/rtl/pocket_afifo.sv" "$ROOT/pocket/rtl/pocket_loader.sv" \
+    "$ROOT/pocket/rtl/pocket_tdp_ram.sv" "$ROOT/pocket/rtl/pocket_afifo.sv" "$ROOT/pocket/rtl/pocket_loader.sv" \
     "$ROOT/pocket/rtl/pocket_cram.sv" "$ROOT/pocket/rtl/pocket_fb.sv" \
     "$ROOT/pocket/sim/cram_model.sv" "$ROOT/pocket/sim/pocket_sim_top.sv" \
     "$ROOT/pocket/sim/pocket_tb.cpp" > "$OBJ.build.log" 2>&1 || { tail -30 "$OBJ.build.log"; exit 1; }

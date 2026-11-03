@@ -21,7 +21,7 @@ module pocket_afifo #(
     output logic [W-1:0] dout,
     output logic         empty
 );
-    logic [W-1:0] mem [0:(1<<AW)-1];
+    (* ramstyle = "logic" *) logic [W-1:0] mem [0:(1<<AW)-1];
 
     logic [AW:0] wbin, wgray, rbin, rgray;
     (* altera_attribute = "-name SYNCHRONIZER_IDENTIFICATION FORCED_IF_ASYNCHRONOUS" *)

@@ -100,11 +100,21 @@ module shangha3_video (
     wire        fa_we    = clearing ? 1'b1     : fb_we;
     wire [11:0] fa_wdata = clearing ? 12'd0    : fb_wdata;
 
+`ifdef POCKET
+    // Analogue Pocket: one true-dual-port memory instead of the two copies
+    // Quartus builds from the code below (pocket/rtl/pocket_tdp_ram.sv). The
+    // blitter never uses fb_rdata from a clock in which it writes.
+    pocket_tdp_ram #(.AW(17), .DW(12), .WORDS(FB_SIZE)) u_fb_draw (
+        .clk, .a_addr(fa_addr), .a_we(fa_we), .a_d(fa_wdata), .a_q(fb_rdata),
+        .b_addr(cp_raddr), .b_q(cp_q)
+    );
+`else
     always_ff @(posedge clk) begin
         if (fa_we) fb_draw[fa_addr] <= fa_wdata;
         fb_rdata <= fb_draw[fa_addr];
     end
     always_ff @(posedge clk) cp_q <= fb_draw[cp_raddr];
+`endif
 
     // ------------------------------------------------------------------
     // vblank copy, part 1: read the draw buffer, pack 4 pixels per word

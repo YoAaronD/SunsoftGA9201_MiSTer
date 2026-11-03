@@ -294,15 +294,37 @@ module shangha3_board (
         ram_we_lo_q <= ram_we && cpu_lds;
         ram_wa_q    <= ram_a;
         ram_wd_q    <= cpu_dout;
-        if (ram_we_hi_q) ram_hi[ram_wa_q] <= ram_wd_q[15:8];
-        if (ram_we_lo_q) ram_lo[ram_wa_q] <= ram_wd_q[7:0];
-        ram_q <= {ram_hi[ram_a], ram_lo[ram_a]};
     end
 
     // second (read-only) port for the blitter
     logic [14:0] blit_ram_addr;
     logic [15:0] blit_ram_q;
+
+`ifdef POCKET
+    // Analogue Pocket: one true-dual-port memory per byte lane instead of the
+    // two copies Quartus builds from the code below. Port A serves the CPU:
+    // in the clock where a write lands it is addressed by the write, so ram_q
+    // that clock is not the CPU read address. The CPU is in that write's bus
+    // cycle then and doesn't sample ram_q (the write lands one clock after the
+    // cycle starts; reads latch ram_q at the end of a cycle).
+    wire        ram_wr_now = ram_we_hi_q || ram_we_lo_q;
+    wire [14:0] ram_pa     = ram_wr_now ? ram_wa_q : ram_a;
+    pocket_tdp_ram #(.AW(15), .DW(8)) u_ram_hi (
+        .clk, .a_addr(ram_pa), .a_we(ram_we_hi_q), .a_d(ram_wd_q[15:8]), .a_q(ram_q[15:8]),
+        .b_addr(blit_ram_addr), .b_q(blit_ram_q[15:8])
+    );
+    pocket_tdp_ram #(.AW(15), .DW(8)) u_ram_lo (
+        .clk, .a_addr(ram_pa), .a_we(ram_we_lo_q), .a_d(ram_wd_q[7:0]), .a_q(ram_q[7:0]),
+        .b_addr(blit_ram_addr), .b_q(blit_ram_q[7:0])
+    );
+`else
+    always_ff @(posedge clk) begin
+        if (ram_we_hi_q) ram_hi[ram_wa_q] <= ram_wd_q[15:8];
+        if (ram_we_lo_q) ram_lo[ram_wa_q] <= ram_wd_q[7:0];
+        ram_q <= {ram_hi[ram_a], ram_lo[ram_a]};
+    end
     always_ff @(posedge clk) blit_ram_q <= {ram_hi[blit_ram_addr], ram_lo[blit_ram_addr]};
+`endif
 
     // ------------------------------------------------------------------
     // Palette RAM 100000-100FFF (2048 x 16, RGBx_555)
@@ -313,16 +335,29 @@ module shangha3_board (
     wire  [10:0] pal_a  = cpu_addr[11:1];
     wire         pal_we = cyc_start && sel_pal && !cpu_rw;
 
+    // second (read-only) port for video scan-out
+    logic [10:0] vid_pal_addr;
+    logic [15:0] vid_pal_q;
+
+`ifdef POCKET
+    // Analogue Pocket: one true-dual-port memory per byte lane (see the work
+    // RAM above); pal_q in a write clock is not used (the CPU is writing).
+    pocket_tdp_ram #(.AW(11), .DW(8)) u_pal_hi (
+        .clk, .a_addr(pal_a), .a_we(pal_we && cpu_uds), .a_d(cpu_dout[15:8]), .a_q(pal_q[15:8]),
+        .b_addr(vid_pal_addr), .b_q(vid_pal_q[15:8])
+    );
+    pocket_tdp_ram #(.AW(11), .DW(8)) u_pal_lo (
+        .clk, .a_addr(pal_a), .a_we(pal_we && cpu_lds), .a_d(cpu_dout[7:0]), .a_q(pal_q[7:0]),
+        .b_addr(vid_pal_addr), .b_q(vid_pal_q[7:0])
+    );
+`else
     always_ff @(posedge clk) begin
         if (pal_we && cpu_uds) pal_hi[pal_a] <= cpu_dout[15:8];
         if (pal_we && cpu_lds) pal_lo[pal_a] <= cpu_dout[7:0];
         pal_q <= {pal_hi[pal_a], pal_lo[pal_a]};
     end
-
-    // second (read-only) port for video scan-out
-    logic [10:0] vid_pal_addr;
-    logic [15:0] vid_pal_q;
     always_ff @(posedge clk) vid_pal_q <= {pal_hi[vid_pal_addr], pal_lo[vid_pal_addr]};
+`endif
 
     // ------------------------------------------------------------------
     // Blitter + frame buffers

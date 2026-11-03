@@ -106,8 +106,8 @@ module pocket_fb (
     logic [13:0] ridx;
     logic        rv0, rv1;
     logic [47:0] rd0, rd1;
-    logic [47:0] rf0 [0:3];
-    logic [47:0] rf1 [0:3];
+    (* ramstyle = "logic" *) logic [47:0] rf0 [0:3];
+    (* ramstyle = "logic" *) logic [47:0] rf1 [0:3];
     logic [2:0]  rw0, rw1, rr0, rr1;        // read FIFO pointers
     logic [3:0]  rcnt;                      // words returned (0..8)
 
