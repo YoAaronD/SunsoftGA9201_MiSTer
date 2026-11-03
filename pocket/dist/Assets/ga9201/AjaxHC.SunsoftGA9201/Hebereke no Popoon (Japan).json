@@ -1,0 +1,21 @@
+{
+    "instance": {
+        "magic": "APF_VER_1",
+        "data_slots": [
+            {
+                "id": 1,
+                "filename": "heberpop.rom"
+            }
+        ],
+        "memory_writes": [
+            {
+                "address": "0x20000000",
+                "data": "0x1"
+            },
+            {
+                "address": "0x20000004",
+                "data": "0xFFFF"
+            }
+        ]
+    }
+}

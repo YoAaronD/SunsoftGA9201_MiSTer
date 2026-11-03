@@ -27,6 +27,7 @@ module shangha3_board (
     input  logic [1:0]  game_id,      // 0 shangha3j, 1 heberpop, 2 blocken (from the MRA)
     input  logic        vid_reset,    // video timing + display path: power-up only, so sync never stops
     input  logic        pause,        // freeze CPU and sound (OSD open); video keeps running
+    input  logic        direct_scan,  // Pocket fallback: scan out the draw buffer (0 on the MiSTer)
     input  logic [2:0]  snd_balance,  // OSD OKI vs YM2149 balance (0 = PCB), see shangha3_mixer.sv
 
     // 68000 ROM reads, as an SDRAM word address (see shangha3_mem.sv):
@@ -354,7 +355,7 @@ module shangha3_board (
     );
 
     shangha3_video u_video (
-        .clk, .reset(vid_reset), .clear(reset), .ce_pix, .hcnt, .vcnt, .vblank_start,
+        .clk, .reset(vid_reset), .clear(reset), .ce_pix, .hcnt, .vcnt, .vblank_start, .direct_scan,
         .fb_addr, .fb_we, .fb_wdata, .fb_rdata,
         .copying   (fb_copying),
         .pal_addr  (vid_pal_addr),

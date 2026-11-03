@@ -179,6 +179,7 @@ shangha3_top core
 	.pause(OSD_STATUS & ~status[7]),   // freeze the game while the menu is open (option, default On)
 	.snd_balance(status[12:10]),       // OKI (drums/FX) balance, 0 = PCB
 	.game_id(game_id),
+	.direct_scan(1'b0),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),

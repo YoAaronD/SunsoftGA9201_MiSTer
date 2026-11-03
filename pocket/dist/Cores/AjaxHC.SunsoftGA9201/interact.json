@@ -1,0 +1,127 @@
+{
+    "interact": {
+        "magic": "APF_VER_1",
+        "variables": [
+            {
+                "name": "Reset Core",
+                "id": 1,
+                "type": "action",
+                "enabled": true,
+                "address": "0x20000100",
+                "value": 1
+            },
+            {
+                "name": "Service Mode",
+                "id": 2,
+                "type": "check",
+                "enabled": true,
+                "address": "0x20000104",
+                "defaultval": 0,
+                "value": 1
+            },
+            {
+                "name": "OKI: PCB balance *",
+                "id": 10,
+                "type": "radio",
+                "group": 100,
+                "enabled": true,
+                "persist": true,
+                "address": "0x20000108",
+                "value": "0x0",
+                "mask": "0xFFFFFF00",
+                "defaultval": "0x0"
+            },
+            {
+                "name": "OKI: +",
+                "id": 11,
+                "type": "radio",
+                "group": 100,
+                "enabled": true,
+                "persist": true,
+                "address": "0x20000108",
+                "value": "0x1",
+                "mask": "0xFFFFFF00"
+            },
+            {
+                "name": "OKI: ++",
+                "id": 12,
+                "type": "radio",
+                "group": 100,
+                "enabled": true,
+                "persist": true,
+                "address": "0x20000108",
+                "value": "0x2",
+                "mask": "0xFFFFFF00"
+            },
+            {
+                "name": "OKI: --",
+                "id": 13,
+                "type": "radio",
+                "group": 100,
+                "enabled": true,
+                "persist": true,
+                "address": "0x20000108",
+                "value": "0x3",
+                "mask": "0xFFFFFF00"
+            },
+            {
+                "name": "OKI: -",
+                "id": 14,
+                "type": "radio",
+                "group": 100,
+                "enabled": true,
+                "persist": true,
+                "address": "0x20000108",
+                "value": "0x4",
+                "mask": "0xFFFFFF00"
+            },
+            {
+                "name": "Pause in menu: On *",
+                "id": 15,
+                "type": "radio",
+                "group": 101,
+                "enabled": true,
+                "persist": true,
+                "address": "0x20000110",
+                "value": "0x0",
+                "mask": "0xFFFFFF00",
+                "defaultval": "0x0"
+            },
+            {
+                "name": "Pause in menu: Off",
+                "id": 16,
+                "type": "radio",
+                "group": 101,
+                "enabled": true,
+                "persist": true,
+                "address": "0x20000110",
+                "value": "0x1",
+                "mask": "0xFFFFFF00"
+            },
+            {
+                "name": "Frame buffer: PSRAM *",
+                "id": 17,
+                "type": "radio",
+                "group": 102,
+                "enabled": true,
+                "persist": true,
+                "address": "0x2000010C",
+                "value": "0x0",
+                "mask": "0xFFFFFF00",
+                "defaultval": "0x0"
+            },
+            {
+                "name": "Frame buffer: Direct",
+                "id": 18,
+                "type": "radio",
+                "group": 102,
+                "enabled": true,
+                "persist": true,
+                "address": "0x2000010C",
+                "value": "0x1",
+                "mask": "0xFFFFFF00"
+            }
+        ],
+        "messages": []
+    }
+}

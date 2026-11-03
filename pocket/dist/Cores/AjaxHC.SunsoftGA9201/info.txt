@@ -1,0 +1,13 @@
+SunsoftGA9201 for Analogue Pocket (pre-release)
+
+Shanghai III (Sunsoft, 1993), Hebereke no Popoon (Sunsoft, 1994) and
+Blocken (KID / Visco, 1994) on the Sunsoft GA9201 arcade hardware.
+Port of the SunsoftGA9201 MiSTer core: https://github.com/YoAaronD/SunsoftGA9201_MiSTer
+
+ROMs are not included. Put shangha3j.rom, heberpop.rom and blocken.rom in
+Assets/ga9201/common/ (see the core's README for how to make them).
+
+Controls: A/B/X = buttons 1/2/3, Start, Select = coin, R = service.
+Core settings: Service Mode, OKI (drums/FX) balance, pause in menu, and the
+frame buffer (PSRAM = tear-free, as on the MiSTer; Direct = fallback).
+Settings marked "frame buffer" take effect after Reset Core.

@@ -8,6 +8,7 @@ module shangha3_top (
     input  logic        pause,          // freeze the game (e.g. while the OSD is open)
     input  logic [2:0]  snd_balance,    // OSD OKI vs YM2149 balance (0 = PCB)
     input  logic [1:0]  game_id,        // 0 shangha3j, 1 heberpop, 2 blocken (MRA, ioctl index 1)
+    input  logic        direct_scan,    // Analogue Pocket fallback (rtl/shangha3_video.sv); 0 on the MiSTer
 
     // ROM download from the MiSTer menu / MRA
     input  logic        ioctl_download,
@@ -112,7 +113,7 @@ module shangha3_top (
     logic        oki_rom_ok;
 
     shangha3_board u_board (
-        .clk, .reset(board_reset), .game_id, .vid_reset(sdram_init), .pause, .snd_balance,
+        .clk, .reset(board_reset), .game_id, .vid_reset(sdram_init), .pause, .snd_balance, .direct_scan,
         .prog_addr, .prog_cs, .prog_data, .prog_ok,
         .z80_rom_addr, .z80_rom_cs, .z80_rom_data, .z80_rom_ok,
         .in_inputs, .in_system, .dsw1, .dsw2,

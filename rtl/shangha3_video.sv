@@ -22,6 +22,13 @@
 //
 // Scan-out: frame buffer entry -> palette RAM (RGBx_555) -> 8-bit RGB.
 // Entries with bit 11 set use the darkened shadow bank (x0.6, as in MAME).
+//
+// direct_scan (Analogue Pocket fallback, latched at each reset; 0 on the
+// MiSTer): no display buffer. The copy still runs (and holds the blitter for
+// the same time), but nothing is written out; the picture is scanned straight
+// from the draw buffer's second port. Tearing is possible when the blitter
+// draws while the screen is displayed, and blitter results show one frame
+// earlier than with the display buffer.
 
 module shangha3_video (
     input  logic        clk,
@@ -31,6 +38,7 @@ module shangha3_video (
     input  logic [8:0]  hcnt,
     input  logic [8:0]  vcnt,
     input  logic        vblank_start,
+    input  logic        direct_scan,
 
     // blitter port (draw buffer)
     input  logic [16:0] fb_addr,
@@ -118,6 +126,11 @@ module shangha3_video (
     logic        need_fresh, fresh_copy;
     logic        wf_pop;
 
+    logic        direct_q;          // direct_scan, latched at reset
+    always_ff @(posedge clk) if (reset || clear) direct_q <= direct_scan;
+    logic [3:0]  ph;                // clocks since last ce_pix (scan-out, below)
+    logic [16:0] dir_raddr;         // direct scan: draw-buffer address of the next pixel
+
     assign copying = rd_busy || clearing;   // blitter may write once every pixel has been read
 
     always_comb begin
@@ -136,7 +149,7 @@ module shangha3_video (
             if (vblank_start && !rd_busy && !wr_busy) begin
                 rd_busy  <= 1'b1;
                 cp_raddr <= '0;
-            end else if (rd_busy && wf_cnt < 8'd127) begin
+            end else if (rd_busy && (direct_q || wf_cnt < 8'd127)) begin
                 cp_v    <= 1'b1;
                 cp_lane <= cp_raddr[1:0];
                 if (cp_raddr == 17'(FB_SIZE - 1)) rd_busy <= 1'b0;
@@ -147,6 +160,7 @@ module shangha3_video (
                 else
                     pack[16*cp_lane +: 16] <= {4'b0, cp_q};
             end
+            if (direct_q && !rd_busy && !vblank_start && ph == 4'd2) cp_raddr <= dir_raddr;
         end
     end
 
@@ -202,7 +216,7 @@ module shangha3_video (
                 disp_valid <= 1'b0;
                 need_fresh <= 1'b1;
             end
-            if (vblank_start && !rd_busy && !wr_busy) begin
+            if (vblank_start && !rd_busy && !wr_busy && !direct_q) begin
                 wr_busy    <= 1'b1;
                 wr_word    <= '0;
                 fresh_copy <= need_fresh && !clear && !clearing;
@@ -211,7 +225,7 @@ module shangha3_video (
 
             // at the start of each line, fetch the next visible line
             vcnt_q <= vcnt;
-            if (vcnt != vcnt_q && vnext_line >= 9'd16 && vnext_line <= 9'd239) begin
+            if (vcnt != vcnt_q && vnext_line >= 9'd16 && vnext_line <= 9'd239 && !direct_q) begin
                 rd_pending <= 1'b1;
                 rd_line    <= 8'(vnext_line - 9'd16);
                 rd_buf     <= vnext_line[0];
@@ -279,7 +293,6 @@ module shangha3_video (
     // Scan-out. During pixel (h,v) the colour of the NEXT pixel is fetched;
     // it is presented when ce_pix advances the counters to that pixel.
     // ------------------------------------------------------------------
-    logic [3:0] ph;                    // clocks since last ce_pix
     logic [8:0] nh, nv;
     logic       nvis;
     logic       sh;                    // shadow bit of the fetched pixel
@@ -290,7 +303,23 @@ module shangha3_video (
         nh = (hcnt == 9'd511) ? 9'd0 : hcnt + 9'd1;
         if (hcnt == 9'd511) nv = (vcnt == 9'd261) ? 9'd0 : vcnt + 9'd1;   // 262-line raster
         else                nv = vcnt;
-        nvis = (nh < 9'd384) && (nv >= 9'd16) && (nv <= 9'd239) && disp_valid;
+        nvis = (nh < 9'd384) && (nv >= 9'd16) && (nv <= 9'd239) && (direct_q ? dir_valid : disp_valid);
+    end
+
+    // direct scan: draw-buffer address of the next pixel, (nv - 16) * 384 + nh;
+    // the screen is black from a board reset until the clear sweep is over
+    logic [16:0] dir_row;
+    logic [8:0]  dir_nh;
+    logic        dir_valid;
+    wire  [8:0]  dir_line = nv - 9'd16;
+    always_ff @(posedge clk) begin
+        if (ph == 4'd0) begin
+            dir_row <= {dir_line[7:0], 8'b0} + {1'b0, dir_line[7:0], 7'b0};
+            dir_nh  <= nh;
+        end
+        dir_raddr <= dir_row + 17'(dir_nh);
+        if (reset || clear || clearing) dir_valid <= 1'b0;
+        else if (vblank_start)          dir_valid <= 1'b1;
     end
 
     // 5-bit colour -> 8 bits; shadowed pixels x0.6 (as in MAME). The x0.6
@@ -341,16 +370,30 @@ module shangha3_video (
         if (reset || ce_pix) ph <= '0;
         else if (ph != 4'hf) ph <= ph + 4'd1;
 
-        case (ph)
-            4'd0: lb_raddr <= {nv[0], nh[8:2]};                              // q at ph 2
-            4'd2: begin pal_addr <= so_px[10:0]; sh <= so_px[11]; end     // pal_q at ph 4
-            4'd4: begin
-                r_n <= nvis ? expand5(pal_q[15:11], sh) : 8'd0;
-                g_n <= nvis ? expand5(pal_q[10:6],  sh) : 8'd0;
-                b_n <= nvis ? expand5(pal_q[5:1],   sh) : 8'd0;
-            end
-            default: ;
-        endcase
+        if (!direct_q) begin
+            case (ph)
+                4'd0: lb_raddr <= {nv[0], nh[8:2]};                              // q at ph 2
+                4'd2: begin pal_addr <= so_px[10:0]; sh <= so_px[11]; end     // pal_q at ph 4
+                4'd4: begin
+                    r_n <= nvis ? expand5(pal_q[15:11], sh) : 8'd0;
+                    g_n <= nvis ? expand5(pal_q[10:6],  sh) : 8'd0;
+                    b_n <= nvis ? expand5(pal_q[5:1],   sh) : 8'd0;
+                end
+                default: ;
+            endcase
+        end else begin
+            // row/column at ph 0, address at ph 1, port B read at ph 2 (copy
+            // block above), cp_q valid at ph 4, pal_q at ph 6
+            case (ph)
+                4'd4: begin pal_addr <= cp_q[10:0]; sh <= cp_q[11]; end
+                4'd6: begin
+                    r_n <= nvis ? expand5(pal_q[15:11], sh) : 8'd0;
+                    g_n <= nvis ? expand5(pal_q[10:6],  sh) : 8'd0;
+                    b_n <= nvis ? expand5(pal_q[5:1],   sh) : 8'd0;
+                end
+                default: ;
+            endcase
+        end
 
         if (ce_pix) begin
             red   <= r_n;

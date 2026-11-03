@@ -3,7 +3,7 @@
 // captured as .ppm and audio as .wav.
 //
 // usage: Vshangha3_top --roms DIR --frames N [--frames-out DIR --every N]
-//                      [--wav file] [--check-sdram]
+//                      [--wav file] [--check-sdram] [--release-at CYCLE]
 //   DIR must hold the four MAME files: s3j_v11.ic3 s3j_v11.ic2
 //   s3j_char-a1.ic43 s3j_v10.ic75 (streamed in that order, like the MRA)
 #include "Vshangha3_top.h"
@@ -99,6 +99,7 @@ int main(int argc, char** argv) {
     int game = 0;
     int frames = 10, every = 30;
     bool check_sdram = false;
+    uint64_t release_at = 0;     // release the game reset at this cycle (to line up with pocket/sim)
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--roms") && i + 1 < argc) roms = argv[++i];
         else if (!strcmp(argv[i], "--stream") && i + 1 < argc) stream_path = argv[++i];
@@ -108,6 +109,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--every") && i + 1 < argc) every = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav_path = argv[++i];
         else if (!strcmp(argv[i], "--check-sdram")) check_sdram = true;
+        else if (!strcmp(argv[i], "--release-at") && i + 1 < argc) release_at = strtoull(argv[++i], 0, 0);
     }
     // The download stream, as the MRA builds it (scripts/mra_stream.py MRA ROMDIR OUT)
     std::vector<uint8_t> stream;
@@ -221,6 +223,7 @@ int main(int argc, char** argv) {
     }
 
     // run the game
+    while (cycle < release_at) tick();
     top->reset = 0;
 #ifdef DEBUG_CACHE
     for (int i = 0; i < 4000; i++) {

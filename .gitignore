@@ -27,3 +27,6 @@ c5_pin_model_dump.txt
 *.jdi
 *.sld
 build_id.v
+
+# Analogue Pocket build output
+pocket/output/
