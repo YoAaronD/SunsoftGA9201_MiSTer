@@ -180,6 +180,9 @@ shangha3_top core
 	.snd_balance(status[12:10]),       // OKI (drums/FX) balance, 0 = PCB
 	.game_id(game_id),
 	.direct_scan(1'b0),
+	.ss_save(1'b0), .ss_load(1'b0), .ss_commit(1'b0), .ss_release(1'b0),   // save states: Pocket only so far
+	.ss_ready(), .ss_done(), .ss_err(), .ss_active(),
+	.ss_rd(1'b0), .ss_wr(1'b0), .ss_idx(15'd0), .ss_wdata(32'd0), .ss_rdata(), .ss_ack(),
 
 	.ioctl_download(ioctl_download),
 	.ioctl_index(ioctl_index),

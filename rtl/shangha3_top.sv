@@ -9,10 +9,21 @@ module shangha3_top (
     input  logic [2:0]  snd_balance,    // OSD OKI vs YM2149 balance (0 = PCB)
     input  logic [1:0]  game_id,        // 0 shangha3j, 1 heberpop, 2 blocken (MRA, ioctl index 1)
     input  logic        direct_scan,    // Analogue Pocket fallback (rtl/shangha3_video.sv); 0 on the MiSTer
-    input  logic        ss_save,        // save states (prototype; tie 0)
-    input  logic        ss_restore,
-    output logic        ss_dumped,
+    // save states (shangha3_board.sv "Save states"; tie the inputs to 0 if unused)
+    input  logic        ss_save,
+    input  logic        ss_load,
+    input  logic        ss_commit,
+    input  logic        ss_release,
+    output logic        ss_ready,
+    output logic        ss_done,
+    output logic        ss_err,
     output logic        ss_active,
+    input  logic        ss_rd,
+    input  logic        ss_wr,
+    input  logic [14:0] ss_idx,
+    input  logic [31:0] ss_wdata,
+    output logic [31:0] ss_rdata,
+    output logic        ss_ack,
 
     // ROM download from the MiSTer menu / MRA
     input  logic        ioctl_download,
@@ -78,9 +89,10 @@ module shangha3_top (
     // the board stays in reset until the cache is clear.
     // ------------------------------------------------------------------
     logic mem_reset, mem_ready, board_reset;
+    logic ss_reset_req;                 // a rejected save-state load reboots the game
     always_ff @(posedge clk) begin
         mem_reset   <= reset || ioctl_download || sdram_init;
-        board_reset <= reset || ioctl_download || sdram_init || !mem_ready;
+        board_reset <= reset || ioctl_download || sdram_init || !mem_ready || ss_reset_req;
     end
 
     // ------------------------------------------------------------------
@@ -118,7 +130,8 @@ module shangha3_top (
 
     shangha3_board u_board (
         .clk, .reset(board_reset), .game_id, .vid_reset(sdram_init), .pause, .snd_balance, .direct_scan,
-        .ss_save, .ss_restore, .ss_dumped, .ss_active,
+        .ss_save, .ss_load, .ss_commit, .ss_release, .ss_ready, .ss_done, .ss_err, .ss_reset_req, .ss_active,
+        .ss_rd, .ss_wr, .ss_idx, .ss_wdata, .ss_rdata, .ss_ack,
         .prog_addr, .prog_cs, .prog_data, .prog_ok,
         .z80_rom_addr, .z80_rom_cs, .z80_rom_data, .z80_rom_ok,
         .in_inputs, .in_system, .dsw1, .dsw2,

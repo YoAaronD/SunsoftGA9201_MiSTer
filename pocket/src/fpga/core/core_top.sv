@@ -339,20 +339,22 @@ wire [31:0] rtc_date_bcd;
 wire [31:0] rtc_time_bcd;
 wire        rtc_valid;
 
-wire        savestate_supported = 0;
-wire [31:0] savestate_addr = 0;
-wire [31:0] savestate_size = 0;
-wire [31:0] savestate_maxloadsize = 0;
+// save states / sleep: pocket/rtl/pocket_ss_bridge.sv (blob of 32768 words at 0x40000000)
+wire        savestate_supported = 1;
+wire [31:0] savestate_addr = 32'h40000000;
+wire [31:0] savestate_size = 32'h00020000;
+wire [31:0] savestate_maxloadsize = 32'h00020000;
 wire        savestate_start;
-wire        savestate_start_ack = 0;
-wire        savestate_start_busy = 0;
-wire        savestate_start_ok = 0;
-wire        savestate_start_err = 0;
+wire        savestate_start_ack;
+wire        savestate_start_busy;
+wire        savestate_start_ok;
+wire        savestate_start_err;
 wire        savestate_load;
-wire        savestate_load_ack = 0;
-wire        savestate_load_busy = 0;
-wire        savestate_load_ok = 0;
-wire        savestate_load_err = 0;
+wire        savestate_load_ack;
+wire        savestate_load_busy;
+wire        savestate_load_ok;
+wire        savestate_load_err;
+wire [31:0] ss_bridge_rd_data;
 
 wire        osnotify_inmenu;
 
@@ -478,6 +480,7 @@ always @(*) begin
                 default: bridge_rd_data = 32'd0;
             endcase
         end
+        32'h4xxxxxxx: bridge_rd_data = ss_bridge_rd_data;
         32'hF8xxxxxx: bridge_rd_data = cmd_bridge_rd_data;
         default:      bridge_rd_data = 32'd0;
     endcase
@@ -556,6 +559,34 @@ wire [63:0] ddr_dout, ddr_din;
 
 wire        sd_cs_n, sd_ras_n, sd_cas_n, sd_we_n, sd_dqml, sd_dqmh;
 
+wire        ss_save, ss_load, ss_commit, ss_release, ss_ready, ss_done, ss_err, ss_active;
+wire        ss_rd, ss_wr, ss_ack;
+wire [14:0] ss_idx;
+wire [31:0] ss_wdata, ss_rdata;
+
+pocket_ss_bridge u_ss (
+    .clk_74a              ( clk_74a ),
+    .bridge_addr          ( bridge_addr ),
+    .bridge_rd            ( bridge_rd ),
+    .bridge_wr            ( bridge_wr ),
+    .bridge_wr_data       ( bridge_wr_data ),
+    .rd_data              ( ss_bridge_rd_data ),
+    .savestate_start      ( savestate_start ),
+    .savestate_start_ack  ( savestate_start_ack ),
+    .savestate_start_busy ( savestate_start_busy ),
+    .savestate_start_ok   ( savestate_start_ok ),
+    .savestate_start_err  ( savestate_start_err ),
+    .savestate_load       ( savestate_load ),
+    .savestate_load_ack   ( savestate_load_ack ),
+    .savestate_load_busy  ( savestate_load_busy ),
+    .savestate_load_ok    ( savestate_load_ok ),
+    .savestate_load_err   ( savestate_load_err ),
+    .clk                  ( clk_sys ),
+    .reset                ( sys_init ),
+    .ss_save, .ss_load, .ss_commit, .ss_release, .ss_ready, .ss_done, .ss_err, .ss_active,
+    .ss_rd, .ss_wr, .ss_idx, .ss_wdata, .ss_rdata, .ss_ack
+);
+
 shangha3_top core (
     .clk            ( clk_sys ),
     .reset          ( !run_s || menu_rst ),
@@ -564,6 +595,8 @@ shangha3_top core (
     .snd_balance    ( oki_s ),
     .game_id        ( game_s ),
     .direct_scan    ( direct_s ),
+    .ss_save, .ss_load, .ss_commit, .ss_release, .ss_ready, .ss_done, .ss_err, .ss_active,
+    .ss_rd, .ss_wr, .ss_idx, .ss_wdata, .ss_rdata, .ss_ack,
 
     .ioctl_download ( ioctl_download ),
     .ioctl_index    ( 16'd0 ),

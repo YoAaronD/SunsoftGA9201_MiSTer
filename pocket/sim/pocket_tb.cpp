@@ -80,6 +80,8 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     std::string frames_out, stream_path, wav_path;
     int game = 0, frames = 10, every = 30, load_gap = 75;
+    int ss_at = 0;                 // --ss-test N: save state at frame N, run on, load it, compare
+    std::string ss_out = ".";
     bool direct = false;
     uint64_t release_at = 0;
     for (int i = 1; i < argc; i++) {
@@ -92,6 +94,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--release-at") && i + 1 < argc) release_at = strtoull(argv[++i], 0, 0);
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav_path = argv[++i];
         else if (!strcmp(argv[i], "--direct")) direct = true;
+        else if (!strcmp(argv[i], "--ss-test") && i + 1 < argc) ss_at = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--ss-out") && i + 1 < argc) ss_out = argv[++i];
     }
     if (stream_path.empty()) { fprintf(stderr, "need --stream <file>\n"); return 1; }
     std::vector<uint8_t> stream = load(stream_path);
@@ -128,7 +132,7 @@ int main(int argc, char** argv) {
     auto edge_a = [&]() {
         top->clk_74a = !top->clk_74a;
         if (!top->clk_74a) {                 // falling edge: host updates its outputs
-            top->bridge_wr = 0;
+            if (loading) top->bridge_wr = 0;
             if (loading && word * 4 < stream.size()) {
                 if (gap == 0) {
                     size_t b = word * 4;
@@ -219,6 +223,65 @@ int main(int argc, char** argv) {
     }
     printf("ioctl_download=%d at release, cycle %llu\n", top->ioctl_download, (unsigned long long)cycle);
     top->reset = 0;
+
+    // ---- save-state test through the APF bridge (pocket_ss_bridge.sv)
+    auto a_wait = [&](long n) { long a0 = a74_cycles; while (a74_cycles - a0 < n) tick(); };
+    auto run_frame = [&]() -> uint64_t {        // to the next start of vblank; frame hash
+        for (;;) { tick(); bool e = top->vblank && !prev_vblank; prev_vblank = top->vblank; if (e) break; }
+        uint64_t h = 1469598103934665603ull; for (auto b : img) { h ^= b; h *= 1099511628211ull; } return h;
+    };
+    auto save_img = [&](const std::string& p) {
+        if (FILE* o = fopen(p.c_str(), "wb")) { fprintf(o, "P6\n384 224\n255\n"); fwrite(img.data(), 1, img.size(), o); fclose(o); }
+    };
+    if (ss_at) {
+        const int N = 32768, M = 60;
+        for (int f = 0; f < ss_at; f++) { run_frame(); if ((f + 1) % 100 == 0) { printf("frame %d\n", f + 1); fflush(stdout); } }
+        // 1) save: command, then read the blob back word by word
+        uint64_t c0 = cycle;
+        top->savestate_start = 1;
+        while (!top->savestate_start_ack) tick();
+        top->savestate_start = 0;
+        while (!top->savestate_start_ok && !top->savestate_start_err) { tick(); if (cycle - c0 > 8000000) { printf("FAIL: save never ok\n"); return 1; } }
+        if (top->savestate_start_err) { printf("FAIL: save error\n"); return 1; }
+        printf("save: ok after %.2f ms\n", (cycle - c0) / 96000.0);
+        std::vector<uint32_t> blob(N);
+        uint64_t r0 = cycle;
+        for (int w = 0; w < N; w++) {
+            top->bridge_addr = 0x40000000u + 4u * w;
+            a_wait(4);                          // the bridge samples 4 cycles after the address
+            blob[w] = top->ss_bridge_rd_data;
+            top->bridge_rd = 1; a_wait(1); top->bridge_rd = 0;
+            a_wait(36);                         // the next word's address over SPI
+        }
+        printf("save: %d words read in %.1f ms; header %08X %08X %08X %08X\n", N, (cycle - r0) / 96000.0, blob[0], blob[1], blob[2], blob[3]);
+        if (FILE* o = fopen((ss_out + "/pocket_blob.bin").c_str(), "wb")) { fwrite(blob.data(), 4, N, o); fclose(o); }
+        uint64_t q0 = cycle;
+        while (top->ss_active) { tick(); if (cycle - q0 > 4000000) { printf("FAIL: game did not resume\n"); return 1; } }
+        printf("save: game resumed %.2f ms after the last read\n", (cycle - q0) / 96000.0);
+        std::vector<uint64_t> ref(M);
+        for (int f = 0; f < M; f++) ref[f] = run_frame();
+        save_img(ss_out + "/pocket_ref_end.ppm");
+        // 2) run on for a while, then load the blob: words first, then the command
+        for (int f = 0; f < 150; f++) run_frame();
+        save_img(ss_out + "/pocket_before_load.ppm");
+        uint64_t l0 = cycle;
+        for (int w = 0; w < N; w++) {
+            top->bridge_addr = 0x40000000u + 4u * w; top->bridge_wr_data = blob[w];
+            a_wait(1); top->bridge_wr = 1; a_wait(1); top->bridge_wr = 0; a_wait(38);
+        }
+        top->savestate_load = 1;
+        while (!top->savestate_load_ack) tick();
+        top->savestate_load = 0;
+        while (!top->savestate_load_ok && !top->savestate_load_err) { tick(); if (cycle - l0 > 400000000) { printf("FAIL: load never ok\n"); return 1; } }
+        printf("load: %s after %.1f ms\n", top->savestate_load_ok ? "ok" : "ERROR", (cycle - l0) / 96000.0);
+        int nd = 0, first = -1, last = -1;
+        for (int f = 0; f < M; f++) { uint64_t h = run_frame(); if (h != ref[f]) { nd++; if (first < 0) first = f + 1; last = f + 1; }
+            if (f == 3) save_img(ss_out + "/pocket_load_f4.ppm"); }
+        save_img(ss_out + "/pocket_load_end.ppm");
+        printf("after load: %d/%d frames differ from the run after the save (first %d, last %d)\n", nd, M, first, last);
+        printf("cellular RAM protocol errors: %d\n", top->cram_errors);
+        return 0;
+    }
 
     uint64_t run_start = cycle;
     while (frame < frames) {

@@ -16,6 +16,13 @@ module pocket_sim_top (
     input  logic        bridge_wr,
     input  logic [31:0] bridge_addr,
     input  logic [31:0] bridge_wr_data,
+    input  logic        bridge_rd,
+    output logic [31:0] ss_bridge_rd_data,     // save-state window (0x4xxxxxxx)
+    input  logic        savestate_start,
+    output logic        savestate_start_ack, savestate_start_busy, savestate_start_ok, savestate_start_err,
+    input  logic        savestate_load,
+    output logic        savestate_load_ack, savestate_load_busy, savestate_load_ok, savestate_load_err,
+    output logic        ss_active,
 
     input  logic [15:0] in_inputs,
     input  logic [6:0]  in_system,
@@ -68,8 +75,23 @@ module pocket_sim_top (
     logic [28:0] ddr_addr;
     logic [63:0] ddr_dout, ddr_din;
 
+    logic        ss_save, ss_load, ss_commit, ss_release, ss_ready, ss_done, ss_err;
+    logic        ss_rd, ss_wr, ss_ack;
+    logic [14:0] ss_idx;
+    logic [31:0] ss_wdata, ss_rdata;
+    pocket_ss_bridge u_ss (
+        .clk_74a, .bridge_addr, .bridge_rd, .bridge_wr, .bridge_wr_data, .rd_data(ss_bridge_rd_data),
+        .savestate_start, .savestate_start_ack, .savestate_start_busy, .savestate_start_ok, .savestate_start_err,
+        .savestate_load, .savestate_load_ack, .savestate_load_busy, .savestate_load_ok, .savestate_load_err,
+        .clk, .reset(sys_init),
+        .ss_save, .ss_load, .ss_commit, .ss_release, .ss_ready, .ss_done, .ss_err, .ss_active,
+        .ss_rd, .ss_wr, .ss_idx, .ss_wdata, .ss_rdata, .ss_ack
+    );
+
     shangha3_top u_core (
         .clk, .reset, .sdram_init(sys_init), .pause, .snd_balance(3'd0), .game_id, .direct_scan,
+        .ss_save, .ss_load, .ss_commit, .ss_release, .ss_ready, .ss_done, .ss_err, .ss_active,
+        .ss_rd, .ss_wr, .ss_idx, .ss_wdata, .ss_rdata, .ss_ack,
         .ioctl_download, .ioctl_index(16'd0), .ioctl_wr, .ioctl_addr, .ioctl_dout, .ioctl_wait,
         .in_inputs, .in_system, .dsw1, .dsw2,
         .ce_pix, .hsync, .vsync, .hblank, .vblank, .vblank_next(), .red, .green, .blue,

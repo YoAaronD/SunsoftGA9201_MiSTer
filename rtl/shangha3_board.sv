@@ -28,11 +28,22 @@ module shangha3_board (
     input  logic        vid_reset,    // video timing + display path: power-up only, so sync never stops
     input  logic        pause,        // freeze CPU and sound (OSD open); video keeps running
     input  logic        direct_scan,  // Pocket fallback: scan out the draw buffer (0 on the MiSTer)
-    // save states (prototype; 0 = unused): see "Save states" below
-    input  logic        ss_save,      // pulse: run the 68000 save handler
-    input  logic        ss_restore,   // pulse: reload the 68000 from the saved stack
-    output logic        ss_dumped,    // one clock: registers are on the stack, SSP latched
-    output logic        ss_active,    // everything but the 68000 frozen
+    // save states (all 0 = unused): see "Save states" at the end
+    input  logic        ss_save,      // pulse: freeze at a clean point and dump the 68000
+    input  logic        ss_load,      // pulse: a load starts (68000 stopped at once)
+    input  logic        ss_commit,    // pulse: every word of the load has been written
+    input  logic        ss_release,   // pulse: the saved state has been read out; resume
+    output logic        ss_ready,     // save: state can be read (until ss_release)
+    output logic        ss_done,      // pulse: load applied, game running again
+    output logic        ss_err,       // pulse: save refused (too early) / load rejected
+    output logic        ss_reset_req, // pulse: rejected load already overwrote RAM: reboot
+    output logic        ss_active,    // a save or load is in progress
+    input  logic        ss_rd,        // pulse: read 32-bit state word ss_idx
+    input  logic        ss_wr,        // pulse: write ss_wdata to state word ss_idx
+    input  logic [14:0] ss_idx,
+    input  logic [31:0] ss_wdata,
+    output logic [31:0] ss_rdata,
+    output logic        ss_ack,       // pulse: ss_rdata valid / write done
     input  logic [2:0]  snd_balance,  // OSD OKI vs YM2149 balance (0 = PCB), see shangha3_mixer.sv
 
     // 68000 ROM reads, as an SDRAM word address (see shangha3_mem.sv):
@@ -135,11 +146,16 @@ module shangha3_board (
     // and resumes exactly where it was); video timing, the frame-buffer copy
     // and the blitter keep running, so the screen holds the last picture.
     logic pause_s1, pause_q;
-    logic ss_freeze;                      // save-state handler running (see "Save states")
+    logic ss_snd_stop;                    // save/load in progress: sound frozen (see "Save states")
+    logic ss_pix_stop;                    // save/load: pixel clock (video timing) stopped
+    logic ss_cpu_clk;                     // save/load: 68000 clocked even while paused
+    wire  cpu_run = !pause_q || ss_cpu_clk;
+    logic        ss_apply;                 // one clock: load the registers below from a loaded state
+    logic [31:0] ss_hdr4, ss_hdr5, ss_hdr6;
     logic        ss_irq7;
     logic        ss_ovr;
     logic [15:0] ss_dout;
-    wire  snd_pause = pause_q || ss_freeze;
+    wire  snd_pause = pause_q || ss_snd_stop;
     always_ff @(posedge clk) begin
         pause_s1 <= pause;                // from the menu: synchronise
         pause_q  <= pause_s1;
@@ -151,7 +167,7 @@ module shangha3_board (
             cpu_phase <= 1'b0;
             psg_div   <= '0;
         end else begin
-            if (!pause_q) begin
+            if (cpu_run) begin
                 cpu_div <= (cpu_div == 2'd2) ? 2'd0 : cpu_div + 2'd1;
                 if (cpu_div == 2'd2) cpu_phase <= ~cpu_phase;
             end
@@ -162,13 +178,13 @@ module shangha3_board (
     // The pixel clock and video timing run through board resets and ROM
     // downloads (only vid_reset stops them), so a CRT never loses sync.
     always_ff @(posedge clk) begin
-        if (vid_reset)       pix_div <= '0;
-        else if (!ss_freeze) pix_div <= (pix_div == 4'd11) ? 4'd0 : pix_div + 4'd1;
+        if (vid_reset)          pix_div <= '0;
+        else if (!ss_pix_stop)  pix_div <= (pix_div == 4'd11) ? 4'd0 : pix_div + 4'd1;
     end
 
-    assign en_phi1 = (cpu_div == 2'd2) && !cpu_phase && !pause_q;
-    assign en_phi2 = (cpu_div == 2'd2) &&  cpu_phase && !pause_q;
-    assign ce_pix  = (pix_div == 4'd11) && !ss_freeze;
+    assign en_phi1 = (cpu_div == 2'd2) && !cpu_phase && cpu_run;
+    assign en_phi2 = (cpu_div == 2'd2) &&  cpu_phase && cpu_run;
+    assign ce_pix  = (pix_div == 4'd11) && !ss_pix_stop;
     assign ce_psg  = (psg_div == 6'd63) && !snd_pause;
 
     // ------------------------------------------------------------------
@@ -290,7 +306,12 @@ module shangha3_board (
     logic [7:0]  ram_hi [0:32767];
     logic [7:0]  ram_lo [0:32767];
     logic [15:0] ram_q;
-    wire  [14:0] ram_a  = cpu_addr[15:1];
+    // the save-state engine owns the CPU side while the 68000 is held in reset
+    logic        ss_mem;               // engine owns the RAM/palette CPU ports
+    logic [15:0] ss_maddr;             // engine RAM/palette word address
+    logic        ss_mwe_ram, ss_mwe_pal;
+    logic [15:0] ss_mwd;
+    wire  [14:0] ram_a  = ss_mem ? ss_maddr[14:0] : cpu_addr[15:1];
     logic        ram_we;       // driven below, after the blitter arbitration logic
 
     // The write itself lands one clock after ram_we (registered address, data
@@ -301,10 +322,10 @@ module shangha3_board (
     logic [14:0] ram_wa_q;
     logic [15:0] ram_wd_q;
     always_ff @(posedge clk) begin
-        ram_we_hi_q <= ram_we && cpu_uds;
-        ram_we_lo_q <= ram_we && cpu_lds;
+        ram_we_hi_q <= (ram_we && cpu_uds) || ss_mwe_ram;
+        ram_we_lo_q <= (ram_we && cpu_lds) || ss_mwe_ram;
         ram_wa_q    <= ram_a;
-        ram_wd_q    <= cpu_dout;
+        ram_wd_q    <= ss_mwe_ram ? ss_mwd : cpu_dout;
     end
 
     // second (read-only) port for the blitter
@@ -343,8 +364,11 @@ module shangha3_board (
     logic [7:0]  pal_hi [0:2047];
     logic [7:0]  pal_lo [0:2047];
     logic [15:0] pal_q;
-    wire  [10:0] pal_a  = cpu_addr[11:1];
+    wire  [10:0] pal_a  = ss_mem ? ss_maddr[10:0] : cpu_addr[11:1];
     wire         pal_we = cyc_start && sel_pal && !cpu_rw;
+    wire         pal_we_hi = (pal_we && cpu_uds) || ss_mwe_pal;
+    wire         pal_we_lo = (pal_we && cpu_lds) || ss_mwe_pal;
+    wire  [15:0] pal_wd    = ss_mwe_pal ? ss_mwd : cpu_dout;
 
     // second (read-only) port for video scan-out
     logic [10:0] vid_pal_addr;
@@ -354,17 +378,17 @@ module shangha3_board (
     // Analogue Pocket: one true-dual-port memory per byte lane (see the work
     // RAM above); pal_q in a write clock is not used (the CPU is writing).
     pocket_tdp_ram #(.AW(11), .DW(8)) u_pal_hi (
-        .clk, .a_addr(pal_a), .a_we(pal_we && cpu_uds), .a_d(cpu_dout[15:8]), .a_q(pal_q[15:8]),
+        .clk, .a_addr(pal_a), .a_we(pal_we_hi), .a_d(pal_wd[15:8]), .a_q(pal_q[15:8]),
         .b_addr(vid_pal_addr), .b_q(vid_pal_q[15:8])
     );
     pocket_tdp_ram #(.AW(11), .DW(8)) u_pal_lo (
-        .clk, .a_addr(pal_a), .a_we(pal_we && cpu_lds), .a_d(cpu_dout[7:0]), .a_q(pal_q[7:0]),
+        .clk, .a_addr(pal_a), .a_we(pal_we_lo), .a_d(pal_wd[7:0]), .a_q(pal_q[7:0]),
         .b_addr(vid_pal_addr), .b_q(vid_pal_q[7:0])
     );
 `else
     always_ff @(posedge clk) begin
-        if (pal_we && cpu_uds) pal_hi[pal_a] <= cpu_dout[15:8];
-        if (pal_we && cpu_lds) pal_lo[pal_a] <= cpu_dout[7:0];
+        if (pal_we_hi) pal_hi[pal_a] <= pal_wd[15:8];
+        if (pal_we_lo) pal_lo[pal_a] <= pal_wd[7:0];
         pal_q <= {pal_hi[pal_a], pal_lo[pal_a]};
     end
     always_ff @(posedge clk) vid_pal_q <= {pal_hi[vid_pal_addr], pal_lo[vid_pal_addr]};
@@ -430,6 +454,8 @@ module shangha3_board (
         if (reset) begin
             prot_cnt <= '0;
             prot_q   <= '0;
+        end else if (ss_apply) begin
+            {prot_cnt, prot_q} <= ss_hdr5[7:0];
         end else if (io_rd && io_reg == IO_PROT) begin
             prot_q   <= prot_value(prot_cnt);
             prot_cnt <= (prot_cnt == 4'd8) ? 4'd0 : prot_cnt + 4'd1;
@@ -473,6 +499,10 @@ module shangha3_board (
             if (cyc_start && !cpu_rw && sel_gfxl) begin
                 if (cpu_uds) dbg_gfxlist[15:8] <= cpu_dout[15:8];
                 if (cpu_lds) dbg_gfxlist[7:0]  <= cpu_dout[7:0];
+            end
+            if (ss_apply) begin
+                {irq4, dbg_flip, dbg_gfxlist, dbg_coinctrl} <= ss_hdr4[25:0];
+                {dbg_oki_data, latch_din}                   <= ss_hdr5[23:8];
             end
         end
     end
@@ -660,6 +690,7 @@ module shangha3_board (
             // MAME (its screens are full of large sprites); without a PCB to
             // check, those games run like MAME (no hold).
             bus_hold <= g_s3 && !vblank && (hold_acc >= 28'd16);
+            if (ss_apply) {bus_hold, hold_acc} <= ss_hdr6[28:0];
         end
     end
 
@@ -733,26 +764,62 @@ module shangha3_board (
     assign dbg_ram_stall     = cpu_cyc && sel_ram && blit_wr_conflict;
 
     // ------------------------------------------------------------------
-    // Save states (prototype). The 68000's registers are saved without
-    // touching fx68k: everything else is frozen, the CPU takes a level-7
-    // interrupt whose vector points at a small handler served from
-    // FF0000-FF001F; the handler pushes D0-D7/A0-A6 and USP onto the
-    // supervisor stack (work RAM) and writes SSP to FF0000, where it is
-    // latched. At that moment (ss_dumped) the whole machine state is the
-    // RAMs + the module registers + ss_ssp. The handler then pops everything
-    // and returns, and the game continues.
-    // Restore: with the RAMs and registers reloaded, the CPU alone is reset;
-    // its reset vector reads return SSP = ss_ssp and PC = FF0010, where the
-    // second half of the handler pops the registers and executes RTE.
+    // Save states
+    //
+    // The 68000's registers are saved without touching fx68k: with the rest
+    // of the board stopped at a clean point (blitter, vblank copy and bus-hold
+    // model idle), the CPU takes a level-7 interrupt whose vector points at a
+    // small handler served from FF0000-FF001F. It pushes D0-D7/A0-A6 and USP
+    // onto the supervisor stack (work RAM) and writes SSP to FF0000, where it
+    // is latched. From then on the CPU is held in reset and the whole machine
+    // state is: work RAM, palette, ss_ssp, the video position and a few
+    // registers, all readable as 32-bit "state words" (ss_rd / ss_idx).
+    // Not saved, measured in simulation (SAVESTATE_PLAN.md): the draw buffer
+    // (redrawn within 1-3 frames), blitter snapshots, display path, memory
+    // controllers and caches (they hold ROM copies only).
+    //
+    // Leaving (after a save has been read out, or after a load): the CPU is
+    // reset alone, its reset-vector reads return SSP = ss_ssp and PC = FF0010,
+    // where the second half of the handler pops the registers and executes
+    // RTE. A save and a load therefore leave the same way. Before that, a load
+    // runs the pixel clock until the video position equals the saved one, so
+    // the vblank IRQ and the copy come at the same point as before the save.
+    //
     // Same idea as the Taito F2 MiSTer core (wickerwaka); written fresh here.
+    //
+    // State words (32 bits; ss_idx):
+    //   0000      'GA92'                     0001  version, game id
+    //   0002      SSP                        0003  vcnt, hcnt, pix_div
+    //   0004      irq4, flip, gfxlist, coin  0005  oki data, latch, protection
+    //   0006      bus hold model             0007  reserved
+    //   0400-07FF palette (2 words each)     4000-7FFF work RAM (2 words each)
+    //   everything else reads 0 (room for the sound section)
     // ------------------------------------------------------------------
-    typedef enum logic [2:0] { SS_IDLE, SS_WAIT, SS_IRQ, SS_RUN, SS_RST, SS_RRUN } ss_t;
+    localparam logic [31:0] SS_MAGIC   = 32'h47413932;            // "GA92"
+    localparam logic [15:0] SS_VERSION = 16'd1;
+    localparam int          SS_MIN_FRAMES = 960;                  // ~17 s: past every game's boot RAM test
+
+    typedef enum logic [3:0] {
+        SS_IDLE,   // running
+        SS_WAIT,   // save: wait for blitter / copy / bus hold idle (game still running)
+        SS_IRQ,    // save: IPL7 until acknowledged
+        SS_RUN,    // save: handler pushes the registers
+        SS_LWAIT,  // load: 68000 held; wait for blitter / copy idle; state words may arrive
+        SS_HOLD,   // 68000 held, board frozen: state words read / written
+        SS_SEEK,   // load: pixel clock runs until the saved video position
+        SS_SETTLE, // load: wait for the vblank copy / blitter to finish
+        SS_APPLY,  // load: registers from the header
+        SS_RST,    // 68000 reset with injected vectors
+        SS_RRUN    // 68000 pops its registers and returns
+    } ss_t;
     ss_t         ss_st;
+    logic        ss_is_load, ss_commit_pend;
     logic [31:0] ss_ssp;
     logic [6:0]  ss_cnt;
     logic        ss_seen;              // handler code fetched
+    logic [9:0]  ss_frames;            // frames since reset (saturating)
+    logic [31:0] ss_hdr [0:7];         // header words of a load
     wire  ss_region = cpu_addr[23:5] == 19'h7F800;            // FF0000-FF001F
-    wire  ss_pfetch = cpu_as_cyc && cpu_rw && cpu_fc[1:0] == 2'b10;
     function automatic logic [15:0] ss_code(input logic [3:0] w);
         case (w)
             4'h0: ss_code = 16'h48E7; 4'h1: ss_code = 16'hFFFE;     // movem.l d0-d7/a0-a6,-(a7)
@@ -768,10 +835,23 @@ module shangha3_board (
             default: ss_code = 16'h4E71;                            // nop
         endcase
     endfunction
+
+    wire [21:0] ss_pos      = {vcnt, hcnt, pix_div};
+    wire        ss_pos_hit  = ss_pos == ss_hdr[3][21:0];
+    wire        ss_hdr_ok   = ss_hdr[0] == SS_MAGIC && ss_hdr[1] == {SS_VERSION, 14'd0, game_id} &&
+                              ss_hdr[3][21:13] < 9'd262 && ss_hdr[3][3:0] < 4'd12;
+    assign ss_hdr4 = ss_hdr[4];
+    assign ss_hdr5 = ss_hdr[5];
+    assign ss_hdr6 = ss_hdr[6];
+
     always_comb begin
-        ss_freeze = ss_st != SS_IDLE && ss_st != SS_WAIT;
-        ss_irq7   = ss_st == SS_IRQ;
-        ss_cpu_reset = ss_st == SS_RST;
+        ss_snd_stop  = ss_st != SS_IDLE && ss_st != SS_WAIT;
+        ss_pix_stop  = ss_st != SS_IDLE && ss_st != SS_WAIT && !(ss_st == SS_SEEK && !ss_pos_hit);
+        ss_cpu_clk   = ss_st != SS_IDLE && ss_st != SS_WAIT;
+        ss_irq7      = ss_st == SS_IRQ;
+        ss_cpu_reset = ss_st == SS_LWAIT || ss_st == SS_HOLD || ss_st == SS_SEEK ||
+                       ss_st == SS_SETTLE || ss_st == SS_APPLY || ss_st == SS_RST;
+        ss_apply     = ss_st == SS_APPLY && ss_hdr_ok;
         ss_ovr  = 1'b0;
         ss_dout = 16'hffff;
         if (ss_st == SS_RUN || ss_st == SS_RRUN || ss_st == SS_IRQ) begin
@@ -792,33 +872,163 @@ module shangha3_board (
             end
         end
     end
-    assign ss_active = ss_freeze;
+    assign ss_active = ss_st != SS_IDLE;
+    assign ss_ready  = ss_st == SS_HOLD && !ss_is_load;
+
+    // header words as they are now (save)
+    function automatic logic [31:0] ss_hdr_now(input logic [2:0] i);
+        case (i)
+            3'd0: ss_hdr_now = SS_MAGIC;
+            3'd1: ss_hdr_now = {SS_VERSION, 14'd0, game_id};
+            3'd2: ss_hdr_now = ss_ssp;
+            3'd3: ss_hdr_now = {10'd0, ss_pos};
+            3'd4: ss_hdr_now = {6'd0, irq4, dbg_flip, dbg_gfxlist, dbg_coinctrl};
+            3'd5: ss_hdr_now = {8'd0, dbg_oki_data, latch_din, prot_cnt, prot_q};
+            3'd6: ss_hdr_now = {3'd0, bus_hold, hold_acc};
+            default: ss_hdr_now = 32'd0;
+        endcase
+    endfunction
+
+    // state word access (only while the 68000 is held: LWAIT / HOLD)
+    logic        m_busy, m_wr;
+    logic [2:0]  m_step;
+    logic [14:0] m_idx;
+    logic [31:0] m_wd;
+    wire         m_hdr = m_idx[14:3] == 12'd0;
+    wire         m_pal = m_idx[14:10] == 5'b00001;
+    wire         m_ram = m_idx[14];
+    wire         ss_held = ss_st == SS_LWAIT || ss_st == SS_HOLD;
+
     always_ff @(posedge clk) begin
-        ss_dumped <= 1'b0;
+        ss_ack     <= 1'b0;
+        ss_mwe_ram <= 1'b0;
+        ss_mwe_pal <= 1'b0;
         if (reset) begin
-            ss_st <= SS_IDLE;
+            m_busy <= 1'b0;
+            ss_mem <= 1'b0;
         end else begin
+            ss_mem <= ss_held;
+            if (!m_busy) begin
+                if ((ss_rd || ss_wr) && ss_held) begin
+                    m_busy <= 1'b1;
+                    m_wr   <= ss_wr;
+                    m_idx  <= ss_idx;
+                    m_wd   <= ss_wdata;
+                    m_step <= '0;
+                end else if (ss_rd || ss_wr) begin
+                    ss_rdata <= 32'd0;          // not held: nothing to access
+                    ss_ack   <= 1'b1;
+                end
+            end else begin
+                m_step <= m_step + 3'd1;
+                if (m_hdr || !(m_pal || m_ram)) begin
+                    // header / unused words: one clock
+                    if (m_wr) begin
+                        if (m_hdr) ss_hdr[m_idx[2:0]] <= m_wd;
+                    end else begin
+                        ss_rdata <= m_hdr ? ss_hdr_now(m_idx[2:0]) : 32'd0;
+                    end
+                    ss_ack <= 1'b1;
+                    m_busy <= 1'b0;
+                end else if (m_wr) begin
+                    // RAM / palette write: two 16-bit words
+                    ss_maddr <= m_ram ? {1'b0, m_idx[13:0], m_step[0]} : {5'd0, m_idx[9:0], m_step[0]};
+                    ss_mwd   <= m_step[0] ? m_wd[15:0] : m_wd[31:16];
+                    ss_mwe_ram <= m_ram;
+                    ss_mwe_pal <= m_pal;
+                    if (m_step == 3'd1) begin
+                        ss_ack <= 1'b1;
+                        m_busy <= 1'b0;
+                    end
+                end else begin
+                    // RAM / palette read: address, RAM samples it, data out (x2)
+                    case (m_step)
+                        3'd0: ss_maddr <= m_ram ? {1'b0, m_idx[13:0], 1'b0} : {5'd0, m_idx[9:0], 1'b0};
+                        3'd2: begin
+                            ss_rdata[31:16] <= m_ram ? ram_q : pal_q;
+                            ss_maddr <= m_ram ? {1'b0, m_idx[13:0], 1'b1} : {5'd0, m_idx[9:0], 1'b1};
+                        end
+                        3'd4: begin
+                            ss_rdata[15:0] <= m_ram ? ram_q : pal_q;
+                            ss_ack <= 1'b1;
+                            m_busy <= 1'b0;
+                        end
+                        default: ;
+                    endcase
+                end
+            end
+        end
+    end
+
+    always_ff @(posedge clk) begin
+        ss_done      <= 1'b0;
+        ss_err       <= 1'b0;
+        ss_reset_req <= 1'b0;
+        if (reset) begin
+            ss_st     <= SS_IDLE;
+            ss_frames <= '0;
+            ss_is_load     <= 1'b0;
+            ss_commit_pend <= 1'b0;
+        end else begin
+            if (vblank_start && ss_frames != 10'h3FF) ss_frames <= ss_frames + 10'd1;
+            if (ss_commit) ss_commit_pend <= 1'b1;
             case (ss_st)
-                SS_IDLE: if (ss_restore) begin ss_st <= SS_RST; ss_cnt <= '0; end
-                         else if (ss_save) ss_st <= SS_WAIT;
-                SS_WAIT: if (!blit_busy && !fb_copying && !bus_hold && (!g_s3 || hold_acc < 28'd16)) ss_st <= SS_IRQ;   // blitter, copy and bus hold idle
-                SS_IRQ:  if (cpu_iack && cpu_addr[3:1] == 3'b111) begin ss_st <= SS_RUN; ss_seen <= 1'b0; end
-                SS_RUN, SS_RRUN: begin
+                SS_IDLE: begin
+                    ss_commit_pend <= 1'b0;
+                    if (ss_load) begin
+                        ss_st <= SS_LWAIT; ss_is_load <= 1'b1;
+                    end else if (ss_save) begin
+                        if (ss_frames >= 10'(SS_MIN_FRAMES)) begin ss_st <= SS_WAIT; ss_is_load <= 1'b0; end
+                        else ss_err <= 1'b1;
+                    end
+                end
+                SS_WAIT: begin
+                    if (ss_load) begin
+                        ss_st <= SS_LWAIT; ss_is_load <= 1'b1;
+                    end else if (!blit_busy && !fb_copying && !bus_hold && (!g_s3 || hold_acc < 28'd16))
+                        ss_st <= SS_IRQ;
+                end
+                SS_IRQ:  if (cpu_iack && cpu_addr[3:1] == 3'b111) ss_st <= SS_RUN;
+                SS_RUN: begin
                     if (cyc_start && ss_region && !cpu_rw && cpu_addr[1] == 1'b0) ss_ssp[31:16] <= cpu_dout;
                     if (cyc_start && ss_region && !cpu_rw && cpu_addr[1] == 1'b1) begin
                         ss_ssp[15:0] <= cpu_dout;
-                        ss_dumped    <= 1'b1;
+                        ss_st <= SS_HOLD;            // everything is in RAM now
                     end
-                    if (cyc_start && ss_region && cpu_rw) ss_seen <= 1'b1;
-                    if (cyc_start && ss_seen && !ss_region && cpu_rw && cpu_fc[1:0] == 2'b10) ss_st <= SS_IDLE;
                 end
+                SS_LWAIT: if (!blit_busy && !fb_copying) ss_st <= SS_HOLD;
+                SS_HOLD: begin
+                    if (!ss_is_load && ss_release) begin
+                        ss_st <= SS_RST; ss_cnt <= '0;
+                    end else if (ss_is_load && (ss_commit || ss_commit_pend) && !m_busy) begin
+                        ss_commit_pend <= 1'b0;
+                        if (ss_hdr_ok) begin
+                            ss_ssp <= ss_hdr[2];
+                            ss_st  <= SS_SEEK;
+                        end else begin
+                            ss_err       <= 1'b1;   // not a state of this game/version
+                            ss_reset_req <= 1'b1;   // RAM is already overwritten: start over
+                            ss_st        <= SS_IDLE;
+                        end
+                    end
+                end
+                SS_SEEK:   if (ss_pos_hit) ss_st <= SS_SETTLE;
+                SS_SETTLE: if (!blit_busy && !fb_copying) ss_st <= SS_APPLY;
+                SS_APPLY:  begin ss_st <= SS_RST; ss_cnt <= '0; end
                 SS_RST: begin
                     ss_cnt <= ss_cnt + 7'd1;
                     if (&ss_cnt) begin ss_st <= SS_RRUN; ss_seen <= 1'b0; end
                 end
+                SS_RRUN: begin
+                    if (cyc_start && ss_region && cpu_rw) ss_seen <= 1'b1;
+                    if (cyc_start && ss_seen && !ss_region && cpu_rw && cpu_fc[1:0] == 2'b10) begin
+                        ss_st   <= SS_IDLE;
+                        ss_done <= ss_is_load;
+                        if (ss_is_load) ss_frames <= 10'h3FF;   // a loaded game is past its boot test
+                    end
+                end
                 default: ss_st <= SS_IDLE;
             endcase
-            if (ss_restore && ss_st != SS_IDLE) begin ss_st <= SS_RST; ss_cnt <= '0; end
         end
     end
 

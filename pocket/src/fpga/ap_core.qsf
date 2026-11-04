@@ -820,6 +820,7 @@ set_global_assignment -name VERILOG_MACRO "POCKET=1"
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_tdp_ram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_afifo.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_loader.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_ss_bridge.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_cram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_fb.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/pocket_video.sv
