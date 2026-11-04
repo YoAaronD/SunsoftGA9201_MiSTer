@@ -43,10 +43,12 @@ set ym_cnt [add_to_collection \
 # The channel registers' outputs (jt12_reg_ch: fnum, block, ... latched on
 # clk_en, and their retimed copies named fnum_I / block_I in jt12_reg) feed
 # the same phase generator (Pocket build of 20261104: -0.267 ns, slow 0C).
-set ym_ch  [add_to_collection \
-               [get_registers -nowarn {*|jt12_top:u_jt12|*jt12_reg_ch:u_regch|*}] \
-               [get_registers -nowarn {*|jt12_top:u_jt12|*jt12_reg:u_reg|fnum_I*}]]
-set ym_ch  [add_to_collection $ym_ch [get_registers -nowarn {*|jt12_top:u_jt12|*jt12_reg:u_reg|block_I*}]]
+# Matched as every register under jt12_reg (incl. jt12_reg_ch): the fitter
+# renames retimed copies (e.g. fnum_I[8]_OTERM2069), so name the block, not
+# the signal. Its CPU-written registers don't reach the phase generator
+# directly (they go through the clk_en-latched outputs).
+set ym_ch  [get_registers -nowarn {*jt12_reg:u_reg|*}]
+post_message -type info "core_constraints.sdc: jt12 pg multicycle: [get_collection_size $ym_pg] pg + [get_collection_size $ym_ch] reg-block registers"
 set ym_src [add_to_collection [add_to_collection $ym_pg $ym_cnt] $ym_ch]
 if {[get_collection_size $ym_pg] > 0} {
     set_multicycle_path -setup 2 -from $ym_src -to $ym_pg
