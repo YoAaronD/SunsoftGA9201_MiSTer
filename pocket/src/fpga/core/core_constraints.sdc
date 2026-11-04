@@ -30,6 +30,22 @@ if {[get_collection_size $z80_regs] > 0} {
     set_multicycle_path -hold  -end 3 -from $z80_regs -to $z80_regs
 }
 
+# YM3438 (jt12) phase generator, Hebereke no Popoon / Blocken: its registers
+# (and the channel/operator counters feeding it) update only on jt12's FM
+# enable clk_en = cen & prescaler (jt12_div.v), which pulses at most once every
+# 12 clocks here. The Pocket build missed by 0.45 ns inside jt12_pg; the
+# SunsoftSHG core relaxes the same paths (its .sdc). Only clk_en-gated sources
+# and destinations; the CPU-written register file stays single-cycle.
+set ym_pg  [get_registers -nowarn {*|jt12_top:u_jt12|jt12_pg:u_pg|*}]
+set ym_cnt [add_to_collection \
+               [get_registers -nowarn {*|jt12_top:u_jt12|*jt12_reg:u_reg|cur_ch[*]}] \
+               [get_registers -nowarn {*|jt12_top:u_jt12|*jt12_reg:u_reg|cur_op[*]}]]
+set ym_src [add_to_collection $ym_pg $ym_cnt]
+if {[get_collection_size $ym_pg] > 0} {
+    set_multicycle_path -setup 2 -from $ym_src -to $ym_pg
+    set_multicycle_path -hold  1 -from $ym_src -to $ym_pg
+}
+
 # ---------------------------------------------------------------------------
 # External memories
 # ---------------------------------------------------------------------------

@@ -92,6 +92,23 @@ module pocket_cram #(
         dqi_q  <= cr_dq_i;
     end
 
+    // The write queue's head, registered at the A edges (timing: the FIFO's
+    // read path plus the next-entry compare didn't fit in one 96 MHz clock on
+    // the Pocket). The copy taken right after a pop still shows the popped
+    // entry, but the state machine never looks at the queue in the decision
+    // after a pop: entries are 3 words long, so the next look is at least 3
+    // decisions later.
+    logic        q_empty, q_next;
+    logic [13:0] q_idx;
+    logic [47:0] q_data;
+    logic [13:0] widx;              // write: index of the entry being written
+    always_ff @(posedge clk) if (ce_a) begin
+        q_empty <= wq_empty;
+        q_idx   <= wq_idx;
+        q_data  <= wq_data;
+        q_next  <= !wq_empty && wq_idx == widx + 14'd1;
+    end
+
     // ------------------------------------------------------------------
     // State machine (B edges)
     // ------------------------------------------------------------------
@@ -106,7 +123,6 @@ module pocket_cram #(
     logic [31:0] rasm;              // read: first two words of the entry
     logic [1:0]  wn;                // write: word of the entry on the bus (0..2)
     logic [47:0] wcur;              // write: entry being written
-    logic [13:0] widx;              // write: its index
     logic [5:0]  ecnt;              // write: entries in this burst
 
     always_ff @(posedge clk) begin
@@ -177,8 +193,8 @@ module pocket_cram #(
                         rq_ack  <= 1'b1;
                         cr_ce_n <= 1'b0;
                         st      <= S_RADV;
-                    end else if (!wq_empty) begin
-                        addr    <= 22'(wq_idx) * 22'd3;
+                    end else if (!q_empty) begin
+                        addr    <= 22'(q_idx) * 22'd3;
                         cr_ce_n <= 1'b0;
                         st      <= S_WADV;
                     end
@@ -223,8 +239,8 @@ module pocket_cram #(
                     cr_dq_oe <= 1'b1;
                     cr_we_n  <= 1'b0;
                     wait1    <= 1'b1;
-                    wcur     <= wq_data;
-                    widx     <= wq_idx;
+                    wcur     <= q_data;
+                    widx     <= q_idx;
                     wq_pop   <= 1'b1;
                     wn       <= 2'd0;
                     ecnt     <= 6'd1;
@@ -240,14 +256,13 @@ module pocket_cram #(
                         if (wn != 2'd2) begin
                             wn      <= wn + 2'd1;
                             cr_dq_o <= (wn == 2'd0) ? wcur[31:16] : wcur[47:32];
-                        end else if (!wq_empty && !wq_pop && wq_idx == widx + 14'd1 &&
-                                     ecnt != 6'(MAXE)) begin
+                        end else if (q_next && ecnt != 6'(MAXE)) begin
                             wn      <= 2'd0;
-                            wcur    <= wq_data;
-                            widx    <= wq_idx;
+                            wcur    <= q_data;
+                            widx    <= q_idx;
                             wq_pop  <= 1'b1;
                             ecnt    <= ecnt + 6'd1;
-                            cr_dq_o <= wq_data[15:0];
+                            cr_dq_o <= q_data[15:0];
                         end else begin
                             cr_ce_n  <= 1'b1;
                             cr_we_n  <= 1'b1;
