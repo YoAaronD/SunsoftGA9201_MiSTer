@@ -246,7 +246,9 @@ int main(int argc, char** argv) {
         printf("save: ok after %.2f ms\n", (cycle - c0) / 96000.0);
         std::vector<uint32_t> blob(N);
         uint64_t r0 = cycle;
+        printf("  [ok seen] ss_st %d rd_cnt %d reading %d r_idx %d r_on %d rf_empty %d\n", top->dbg_ss_st, top->dbg_rd_cnt, top->dbg_reading, top->dbg_r_idx, top->dbg_r_on, top->dbg_rf_empty);
         for (int w = 0; w < N; w++) {
+            if (w < 3 || w == N - 1) printf("  [read %d] rd_cnt %d empty %d\n", w, top->dbg_rd_cnt, top->dbg_rf_empty);
             top->bridge_addr = 0x40000000u + 4u * w;
             a_wait(4);                          // the bridge samples 4 cycles after the address
             blob[w] = top->ss_bridge_rd_data;
@@ -256,7 +258,10 @@ int main(int argc, char** argv) {
         printf("save: %d words read in %.1f ms; header %08X %08X %08X %08X\n", N, (cycle - r0) / 96000.0, blob[0], blob[1], blob[2], blob[3]);
         if (FILE* o = fopen((ss_out + "/pocket_blob.bin").c_str(), "wb")) { fwrite(blob.data(), 4, N, o); fclose(o); }
         uint64_t q0 = cycle;
-        while (top->ss_active) { tick(); if (cycle - q0 > 4000000) { printf("FAIL: game did not resume\n"); return 1; } }
+        auto dbg = [&](const char* w) { printf("  [%s] ss_st %d rd_cnt %d reading %d r_idx %d r_on %d rf_empty %d ready %d active %d\n", w,
+            top->dbg_ss_st, top->dbg_rd_cnt, top->dbg_reading, top->dbg_r_idx, top->dbg_r_on, top->dbg_rf_empty, top->dbg_ready, top->ss_active); };
+        dbg("after last read");
+        while (top->ss_active) { tick(); if (cycle - q0 > 4000000) { dbg("timeout"); printf("FAIL: game did not resume\n"); return 1; } }
         printf("save: game resumed %.2f ms after the last read\n", (cycle - q0) / 96000.0);
         std::vector<uint64_t> ref(M);
         for (int f = 0; f < M; f++) ref[f] = run_frame();

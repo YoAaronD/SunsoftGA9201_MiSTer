@@ -797,7 +797,11 @@ module shangha3_board (
     // ------------------------------------------------------------------
     localparam logic [31:0] SS_MAGIC   = 32'h47413932;            // "GA92"
     localparam logic [15:0] SS_VERSION = 16'd1;
+`ifdef SS_SIM_GUARD
+    localparam int          SS_MIN_FRAMES = `SS_SIM_GUARD;        // simulation only: shorter runs
+`else
     localparam int          SS_MIN_FRAMES = 960;                  // ~17 s: past every game's boot RAM test
+`endif
 
     typedef enum logic [3:0] {
         SS_IDLE,   // running

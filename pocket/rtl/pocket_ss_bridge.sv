@@ -110,6 +110,7 @@ module pocket_ss_bridge #(
     logic start_q = 0, load_q = 0, rd_q = 0, wr_q = 0;
     logic [15:0] rd_cnt = 0;
     logic        reading = 0;
+    logic        ok_pend = 0;
     logic [27:0] idle_cnt = 0;                  // host stopped reading: resume after ~1.8 s
     logic [3:0]  rst_a_cnt = 0;
 
@@ -140,10 +141,15 @@ module pocket_ss_bridge #(
             savestate_start_err  <= 1'b0;
             rd_cnt    <= '0;
             reading   <= 1'b0;
+            ok_pend   <= 1'b0;
             rst_a_cnt <= 4'd15;          // empty the read FIFO (the core side resets too)
             t_save    <= ~t_save;
         end
-        if (a_ready) begin
+        // ready: report ok once the first words are in the FIFO (the host
+        // may start reading as soon as it sees ok)
+        if (a_ready) ok_pend <= 1'b1;
+        if (ok_pend && !rf_empty && !rf_rst_a) begin
+            ok_pend              <= 1'b0;
             savestate_start_busy <= 1'b0;
             savestate_start_ok   <= 1'b1;
             reading              <= 1'b1;
@@ -239,7 +245,7 @@ module pocket_ss_bridge #(
                 r_idx     <= '0;
                 t_ready_ok <= ~t_ready_ok;
             end
-            if (r_on && !r_wait && !rf_full && !rf_rst_c) begin
+            if (r_on && !r_wait && !rf_push && !rf_full && !rf_rst_c) begin   // (full is stale while a push lands)
                 ss_rd  <= 1'b1;
                 ss_idx <= r_idx[14:0];
                 r_wait <= 1'b1;

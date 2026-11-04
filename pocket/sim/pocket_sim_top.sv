@@ -23,6 +23,7 @@ module pocket_sim_top (
     input  logic        savestate_load,
     output logic        savestate_load_ack, savestate_load_busy, savestate_load_ok, savestate_load_err,
     output logic        ss_active,
+    output int          dbg_ss_st, dbg_rd_cnt, dbg_reading, dbg_r_idx, dbg_r_on, dbg_rf_empty, dbg_ready,
 
     input  logic [15:0] in_inputs,
     input  logic [6:0]  in_system,
@@ -87,6 +88,14 @@ module pocket_sim_top (
         .ss_save, .ss_load, .ss_commit, .ss_release, .ss_ready, .ss_done, .ss_err, .ss_active,
         .ss_rd, .ss_wr, .ss_idx, .ss_wdata, .ss_rdata, .ss_ack
     );
+
+    assign dbg_ss_st    = int'(u_core.u_board.ss_st);
+    assign dbg_rd_cnt   = int'(u_ss.rd_cnt);
+    assign dbg_reading  = int'(u_ss.reading);
+    assign dbg_r_idx    = int'(u_ss.r_idx);
+    assign dbg_r_on     = int'(u_ss.r_on);
+    assign dbg_rf_empty = int'(u_ss.rf_empty);
+    assign dbg_ready    = int'(ss_ready);
 
     shangha3_top u_core (
         .clk, .reset, .sdram_init(sys_init), .pause, .snd_balance(3'd0), .game_id, .direct_scan,
