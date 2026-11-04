@@ -58,7 +58,9 @@ DIP switches use each game's defaults (from the MRA), set by the game's
 
 ## Save states and sleep
 
-Memories (save / load state) and sleep work in all three games. Notes:
+Memories (save / load state) and sleep are supported (pre-release: tested in
+simulation on Shanghai III; Hebereke no Popoon and Blocken use the same
+mechanism, and their sound CPU isn't saved yet). Notes:
 - A save is refused for the first ~17 seconds after the game starts (the
   games' power-on RAM tests move the CPU's stack, so it can't be saved there).
 - After loading, the picture takes a few frames to redraw. Sound picks up
