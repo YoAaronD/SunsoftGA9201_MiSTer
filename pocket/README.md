@@ -56,7 +56,16 @@ DIP switches use each game's defaults (from the MRA), set by the game's
 `.json` in `Assets/ga9201/AjaxHC.SunsoftGA9201/` (`0x20000004`: SW1 in bits
 7-0, SW2 in bits 15-8).
 
-## Building
+## Save states and sleep
+
+Memories (save / load state) and sleep work in all three games. Notes:
+- A save is refused for the first ~17 seconds after the game starts (the
+  games' power-on RAM tests move the CPU's stack, so it can't be saved there).
+- After loading, the picture takes a few frames to redraw. Sound picks up
+  with the next notes (the sound chips themselves aren't saved yet, so a note
+  that was playing at the save point is lost).
+- A state only loads into the same game.
+
 
 Quartus Prime Lite (17.0 or later), project `pocket/src/fpga/ap_core.qpf`.
 Then, on Windows:
@@ -82,6 +91,11 @@ ROMs).
   MiSTer (checked in simulation for every frame).
 - **SDRAM:** the Pocket's SDRAM has no chip select; cycles where the shared
   controller deselects are turned into NOPs.
+- **Save states:** `rtl/pocket_ss_bridge.sv` connects the APF save/load
+  commands to the board's state port (`rtl/shangha3_board.sv`, "Save states"):
+  the 68000 saves its own registers through a small injected interrupt
+  handler, the blob (128 KB at bridge address 0x40000000) holds work RAM,
+  palette and a header, and a load restores the CPU the same way.
 
 ## Simulation
 
@@ -93,7 +107,10 @@ checks the SDRAM image, runs the game with two PSRAM models
 (`sim/cram_model.sv`: variable latency, refresh collisions, row-boundary
 stalls) and reports the PSRAM protocol errors and the blitter hold time per
 frame. With the same `--release-at`, `scripts/sim_top.sh` (MiSTer path) gives
-frames to compare.
+frames to compare. `--ss-test N` saves a state at frame N through the
+bridge, runs on, loads it and compares (build with
+`VFLAGS="+define+SS_SIM_GUARD=650"` to allow saves from frame 650);
+`pocket/scripts/ss_bridge_test.sh` checks the bridge alone in seconds.
 
 ## Credits
 
