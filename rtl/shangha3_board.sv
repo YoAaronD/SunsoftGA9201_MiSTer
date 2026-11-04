@@ -801,7 +801,7 @@ module shangha3_board (
             case (ss_st)
                 SS_IDLE: if (ss_restore) begin ss_st <= SS_RST; ss_cnt <= '0; end
                          else if (ss_save) ss_st <= SS_WAIT;
-                SS_WAIT: if (!blit_busy && !fb_copying && !bus_hold && hold_acc < 28'd16) ss_st <= SS_IRQ;   // blitter, copy and bus hold idle
+                SS_WAIT: if (!blit_busy && !fb_copying && !bus_hold && (!g_s3 || hold_acc < 28'd16)) ss_st <= SS_IRQ;   // blitter, copy and bus hold idle
                 SS_IRQ:  if (cpu_iack && cpu_addr[3:1] == 3'b111) begin ss_st <= SS_RUN; ss_seen <= 1'b0; end
                 SS_RUN, SS_RRUN: begin
                     if (cyc_start && ss_region && !cpu_rw && cpu_addr[1] == 1'b0) ss_ssp[31:16] <= cpu_dout;
