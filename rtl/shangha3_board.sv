@@ -34,7 +34,7 @@ module shangha3_board (
     input  logic        ss_commit,    // pulse: every word of the load has been written
     input  logic        ss_release,   // pulse: the saved state has been read out; resume
     output logic        ss_ready,     // save: state can be read (until ss_release)
-    output logic        ss_done,      // pulse: load applied, game running again
+    output logic        ss_done,      // pulse: load accepted (game resumes within a frame)
     output logic        ss_err,       // pulse: save refused (too early) / load rejected
     output logic        ss_reset_req, // pulse: rejected load already overwrote RAM: reboot
     output logic        ss_active,    // a save or load is in progress
@@ -1009,8 +1009,12 @@ module shangha3_board (
                     end else if (ss_is_load && (ss_commit || ss_commit_pend) && !m_busy) begin
                         ss_commit_pend <= 1'b0;
                         if (ss_hdr_ok) begin
-                            ss_ssp <= ss_hdr[2];
-                            ss_st  <= SS_SEEK;
+                            ss_ssp  <= ss_hdr[2];
+                            ss_st   <= SS_SEEK;
+                            // reported done now: the host expects an answer at
+                            // once (agg23's Pocket cores do the same); the game
+                            // resumes within about a frame
+                            ss_done <= 1'b1;
                         end else begin
                             ss_err       <= 1'b1;   // not a state of this game/version
                             ss_reset_req <= 1'b1;   // RAM is already overwritten: start over
@@ -1029,7 +1033,6 @@ module shangha3_board (
                     if (cyc_start && ss_region && cpu_rw) ss_seen <= 1'b1;
                     if (cyc_start && ss_seen && !ss_region && cpu_rw && cpu_fc[1:0] == 2'b10) begin
                         ss_st   <= SS_IDLE;
-                        ss_done <= ss_is_load;
                         if (ss_is_load) ss_frames <= 10'h3FF;   // a loaded game is past its boot test
                     end
                 end
