@@ -50,10 +50,21 @@ int main(int argc, char** argv) {
     }
     printf("save %d: ok after %d start polls\n", round, polls);
     int bad = 0;
-    for (int w = 0; w < 32768; w++) {
+    unsigned rng = 12345 + round;
+    auto rd1 = [&](int w) -> uint32_t {
         t->bridge_addr = 0x40000000u + 4u * w; aw(4);
-        uint32_t d = t->rd_data; if (d != (uint32_t)(w * 3 + 1) && bad++ < 5) printf("word %d: %08X\n", w, d);
+        uint32_t d = t->rd_data;
         t->bridge_rd = 1; aw(1); t->bridge_rd = 0; aw(36);
+        return d;
+    };
+    // as seen on hardware: 1 KB chunks, an extra read at each chunk start,
+    // and now and then a word read twice
+    for (int w = 0; w < 32768; w++) {
+        if (w % 256 == 0) rd1(w);
+        uint32_t d = rd1(w);
+        rng = rng * 1103515245u + 12345u;
+        if ((rng >> 16) % 97 == 0) d = rd1(w);
+        if (d != (uint32_t)(w * 3 + 1) && bad++ < 5) printf("word %d: %08X\n", w, d);
     }
     for (int i = 0; i < 100; i++) tick();
     printf("read-out: %d bad words, active after = %d\n", bad, (int)t->ss_active);
@@ -62,9 +73,9 @@ int main(int argc, char** argv) {
       printf("extra poll after the read-out: busy=%d ok=%d (expect 0 1)\n", (int)t->savestate_start_busy, (int)t->savestate_start_ok); }
     for (int order = 0; order < 1; order++) {
         std::fill(mem.begin(), mem.end(), 0);
-        auto words = [&]() { for (int w = 0; w < 32768; w++) {
-            t->bridge_addr = 0x40000000u + 4u * w; t->bridge_wr_data = w ^ 0x5A5A0000u ^ order;
-            aw(1); t->bridge_wr = 1; aw(1); t->bridge_wr = 0; aw(38); } };
+        auto wr1 = [&](int w) { t->bridge_addr = 0x40000000u + 4u * w; t->bridge_wr_data = w ^ 0x5A5A0000u ^ round;
+            aw(1); t->bridge_wr = 1; aw(1); t->bridge_wr = 0; aw(38); };
+        auto words = [&]() { for (int w = 0; w < 32768; w++) { if (w % 256 == 0) wr1(w); wr1(w); } };
         // query, data, then the load command polled until ok/err
         t->savestate_load_query = 1; aw(1); t->savestate_load_query = 0; aw(200);
         words();
@@ -75,7 +86,7 @@ int main(int argc, char** argv) {
             aw(1); t->savestate_load = 0; aw(200); lp++;
         }
         printf("load: %d polls\n", lp);
-        int wbad = 0; for (int w = 0; w < 32768; w++) if (mem[w] != (uint32_t)(w ^ 0x5A5A0000u ^ order)) wbad++;
+        int wbad = 0; for (int w = 0; w < 32768; w++) if (mem[w] != (uint32_t)(w ^ 0x5A5A0000u ^ round)) wbad++;
         printf("load %d: ok=%d err=%d, %d words wrong\n", round, (int)t->savestate_load_ok, (int)t->savestate_load_err, wbad);
     }
   }

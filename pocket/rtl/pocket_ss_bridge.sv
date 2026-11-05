@@ -110,7 +110,16 @@ module pocket_ss_bridge #(
     // ------------------------------------------------------------------
     wire in_win = bridge_addr[31:28] == BASE_NIB;
     logic start_q = 0, load_q = 0, rd_q = 0, wr_q = 0;
-    logic [15:0] rd_cnt = 0;
+    // Read-out window: the words are served by their address from a 64-word
+    // buffer that the stream fills ahead of the host (up to 32 words beyond
+    // the highest address read) and that keeps the last 32 words behind it.
+    // The host reads in chunks and repeats or adds reads (seen on hardware:
+    // a stream popped once per read drifted one word every 1 KB), so the
+    // read strobes are not counted; the address decides.
+    logic [31:0] wbuf [0:63];
+    logic [15:0] wfill = 0;                     // words in the buffer so far (stream position)
+    logic [15:0] rmax  = 0;                     // highest address read + 1
+    logic        released = 0;
     logic        reading = 0;
     logic        ok_pend = 0;
     // The host polls a command by re-sending it with the start/load bit set,
@@ -123,7 +132,9 @@ module pocket_ss_bridge #(
     logic [27:0] idle_cnt = 0;                  // host stopped reading: resume after ~1.8 s
     logic [3:0]  rst_a_cnt = 0;
 
-    assign rd_data = rf_empty ? 32'd0 : rf_dout;
+    wire  [15:0] ridx = {1'b0, bridge_addr[16:2]};
+    wire         rhit = ridx < wfill && (wfill - ridx) <= 16'd64;
+    assign rd_data = rhit ? wbuf[ridx[5:0]] : 32'd0;
     assign rf_rst_a = rst_a_cnt != 0;
 
     initial begin
@@ -145,18 +156,20 @@ module pocket_ss_bridge #(
         // save
         if (!(&s_quiet)) s_quiet <= s_quiet + 25'd1;
         if (!(&l_quiet)) l_quiet <= l_quiet + 25'd1;
-        if (savestate_start_query || (&s_quiet && !savestate_start_busy && !reading)) s_armed <= 1'b1;
+        if (savestate_start_query || (&s_quiet && !savestate_start_busy && !(reading && !released))) s_armed <= 1'b1;
         if (savestate_load_query  || (&l_quiet && !savestate_load_busy))              l_armed <= 1'b1;
         if (savestate_start && !start_q) begin
             savestate_start_ack <= 1'b1;
             s_quiet <= '0;
         end
-        if (savestate_start && !start_q && s_armed && !savestate_start_busy && !reading) begin
+        if (savestate_start && !start_q && s_armed && !savestate_start_busy && !(reading && !released)) begin
             s_armed              <= 1'b0;
             savestate_start_busy <= 1'b1;
             savestate_start_ok   <= 1'b0;
             savestate_start_err  <= 1'b0;
-            rd_cnt    <= '0;
+            wfill     <= '0;
+            rmax      <= '0;
+            released  <= 1'b0;
             reading   <= 1'b0;
             ok_pend   <= 1'b0;
             rst_a_cnt <= 4'd15;          // empty the read FIFO (the core side resets too)
@@ -165,7 +178,7 @@ module pocket_ss_bridge #(
         // ready: report ok once the first words are in the FIFO (the host
         // may start reading as soon as it sees ok)
         if (a_ready) ok_pend <= 1'b1;
-        if (ok_pend && !rf_empty && !rf_rst_a) begin
+        if (ok_pend && (wfill >= 16'd32 || wfill == 16'(NWORDS))) begin
             ok_pend              <= 1'b0;
             savestate_start_busy <= 1'b0;
             savestate_start_ok   <= 1'b1;
@@ -175,18 +188,25 @@ module pocket_ss_bridge #(
             savestate_start_busy <= 1'b0;
             savestate_start_err  <= 1'b1;
         end
-        // the bridge has taken the word on the bus: next one
-        if (reading) idle_cnt <= idle_cnt + 28'd1;
-        if (bridge_rd && !rd_q && in_win && reading && !rf_empty) begin
-            rf_pop   <= 1'b1;
-            rd_cnt   <= rd_cnt + 16'd1;
+        // fill the window from the stream (one word every other clock: the
+        // FIFO's head changes the clock after a pop)
+        if ((ok_pend || reading) && !rf_pop && !rf_empty && !rf_rst_a &&
+            wfill != 16'(NWORDS) && wfill < rmax + 16'd32) begin
+            wbuf[wfill[5:0]] <= rf_dout;
+            rf_pop <= 1'b1;
+            wfill  <= wfill + 16'd1;
+        end
+        // reads: the address decides; the last address releases the board
+        if (reading && !released) idle_cnt <= idle_cnt + 28'd1;
+        if (bridge_rd && !rd_q && in_win && reading) begin
             idle_cnt <= '0;
-            if (rd_cnt == LAST) begin
-                reading   <= 1'b0;
+            if (ridx + 16'd1 > rmax) rmax <= ridx + 16'd1;
+            if (ridx == LAST && !released) begin
+                released  <= 1'b1;
                 t_release <= ~t_release;
             end
-        end else if (reading && &idle_cnt) begin
-            reading   <= 1'b0;
+        end else if (reading && !released && &idle_cnt) begin
+            released  <= 1'b1;               // host gave up: let the game go on
             t_release <= ~t_release;
         end
 
@@ -225,6 +245,7 @@ module pocket_ss_bridge #(
     // ------------------------------------------------------------------
     logic        save_pend, load_pend, commit_pend;
     logic [15:0] r_idx, w_cnt;
+    logic        w_last;                    // the blob's last word has been written
     logic        r_on, r_wait, w_wait;
     logic        ready_q;
     logic [3:0]  rst_c_cnt;
@@ -247,6 +268,7 @@ module pocket_ss_bridge #(
             r_wait <= 1'b0;
             w_wait <= 1'b0;
             w_cnt  <= '0;
+            w_last <= 1'b0;
             ss_save <= 1'b0;
             ss_load <= 1'b0;
             rst_c_cnt <= 4'd15;
@@ -298,15 +320,18 @@ module pocket_ss_bridge #(
                 w_wait <= 1'b0;
                 wf_pop <= 1'b1;
                 w_cnt  <= w_cnt + 16'd1;
+                if (ss_idx == LAST[14:0]) w_last <= 1'b1;
             end
             ss_load <= load_pend && !ss_active;
             if (load_pend && ss_active) load_pend <= 1'b0;
 
             if (c_commit) commit_pend <= 1'b1;
-            if (commit_pend && w_cnt == 16'(NWORDS) && wf_empty && !w_wait) begin
+            // the host writes the blob in order (repeats allowed): done at the last word
+            if (commit_pend && w_last && wf_empty && !w_wait && !wf_pop) begin
                 ss_commit   <= 1'b1;
                 commit_pend <= 1'b0;
                 w_cnt       <= '0;
+                w_last      <= 1'b0;
             end
         end
     end
