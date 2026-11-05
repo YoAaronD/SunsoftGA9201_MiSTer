@@ -238,10 +238,17 @@ int main(int argc, char** argv) {
         for (int f = 0; f < ss_at; f++) { run_frame(); if ((f + 1) % 100 == 0) { printf("frame %d\n", f + 1); fflush(stdout); } }
         // 1) save: command, then read the blob back word by word
         uint64_t c0 = cycle;
-        top->savestate_start = 1;
-        while (!top->savestate_start_ack) tick();
-        top->savestate_start = 0;
-        while (!top->savestate_start_ok && !top->savestate_start_err) { tick(); if (cycle - c0 > 8000000) { printf("FAIL: save never ok\n"); return 1; } }
+        // as the APF host does: query, then the start command polled until done
+        top->savestate_start_query = 1; a_wait(1); top->savestate_start_query = 0; a_wait(200);
+        int polls = 0;
+        for (;;) {
+            top->savestate_start = 1; while (!top->savestate_start_ack) tick();
+            bool done = top->savestate_start_ok || top->savestate_start_err;
+            a_wait(1); top->savestate_start = 0; a_wait(2000); polls++;
+            if (done) break;
+            if (cycle - c0 > 8000000) { printf("FAIL: save never ok\n"); return 1; }
+        }
+        printf("save: %d start polls\n", polls);
         if (top->savestate_start_err) { printf("FAIL: save error\n"); return 1; }
         printf("save: ok after %.2f ms\n", (cycle - c0) / 96000.0);
         std::vector<uint32_t> blob(N);
@@ -270,14 +277,22 @@ int main(int argc, char** argv) {
         for (int f = 0; f < 150; f++) run_frame();
         save_img(ss_out + "/pocket_before_load.ppm");
         uint64_t l0 = cycle;
+        top->savestate_load_query = 1; a_wait(1); top->savestate_load_query = 0; a_wait(200);
         for (int w = 0; w < N; w++) {
             top->bridge_addr = 0x40000000u + 4u * w; top->bridge_wr_data = blob[w];
             a_wait(1); top->bridge_wr = 1; a_wait(1); top->bridge_wr = 0; a_wait(38);
         }
-        top->savestate_load = 1;
-        while (!top->savestate_load_ack) tick();
-        top->savestate_load = 0;
-        while (!top->savestate_load_ok && !top->savestate_load_err) { tick(); if (cycle - l0 > 400000000) { printf("FAIL: load never ok\n"); return 1; } }
+        {
+            int lp = 0;
+            for (;;) {
+                top->savestate_load = 1; while (!top->savestate_load_ack) tick();
+                bool done = top->savestate_load_ok || top->savestate_load_err;
+                a_wait(1); top->savestate_load = 0; a_wait(2000); lp++;
+                if (done) break;
+                if (cycle - l0 > 400000000) { printf("FAIL: load never ok\n"); return 1; }
+            }
+            printf("load: %d load polls\n", lp);
+        }
         printf("load: %s after %.1f ms\n", top->savestate_load_ok ? "ok" : "ERROR", (cycle - l0) / 96000.0);
         int nd = 0, first = -1, last = -1;
         for (int f = 0; f < M; f++) { uint64_t h = run_frame(); if (h != ref[f]) { nd++; if (first < 0) first = f + 1; last = f + 1; }

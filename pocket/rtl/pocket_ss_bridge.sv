@@ -29,11 +29,13 @@ module pocket_ss_bridge #(
     output logic [31:0] rd_data,                // for core_top's read mux (window hit)
 
     input  logic        savestate_start,
+    input  logic        savestate_start_query,  // 0x00A0 without the start bit (core_bridge_cmd)
     output logic        savestate_start_ack,
     output logic        savestate_start_busy,
     output logic        savestate_start_ok,
     output logic        savestate_start_err,
     input  logic        savestate_load,
+    input  logic        savestate_load_query,   // 0x00A4 without the load bit
     output logic        savestate_load_ack,
     output logic        savestate_load_busy,
     output logic        savestate_load_ok,
@@ -111,6 +113,13 @@ module pocket_ss_bridge #(
     logic [15:0] rd_cnt = 0;
     logic        reading = 0;
     logic        ok_pend = 0;
+    // The host polls a command by re-sending it with the start/load bit set,
+    // and core_bridge_cmd raises savestate_start/_load again for every poll.
+    // Every poll is acknowledged, but only an "armed" bridge starts a new job:
+    // armed by the query the host sends before each new save/load (command
+    // without the bit), or after half a second without polls.
+    logic        s_armed = 1, l_armed = 1, l_data = 0;
+    logic [24:0] s_quiet = 0, l_quiet = 0;
     logic [27:0] idle_cnt = 0;                  // host stopped reading: resume after ~1.8 s
     logic [3:0]  rst_a_cnt = 0;
 
@@ -134,8 +143,16 @@ module pocket_ss_bridge #(
         if (rst_a_cnt != 0) rst_a_cnt <= rst_a_cnt - 4'd1;
 
         // save
+        if (!(&s_quiet)) s_quiet <= s_quiet + 25'd1;
+        if (!(&l_quiet)) l_quiet <= l_quiet + 25'd1;
+        if (savestate_start_query || (&s_quiet && !savestate_start_busy && !reading)) s_armed <= 1'b1;
+        if (savestate_load_query  || (&l_quiet && !savestate_load_busy))              l_armed <= 1'b1;
         if (savestate_start && !start_q) begin
-            savestate_start_ack  <= 1'b1;
+            savestate_start_ack <= 1'b1;
+            s_quiet <= '0;
+        end
+        if (savestate_start && !start_q && s_armed && !savestate_start_busy && !reading) begin
+            s_armed              <= 1'b0;
             savestate_start_busy <= 1'b1;
             savestate_start_ok   <= 1'b0;
             savestate_start_err  <= 1'b0;
@@ -177,9 +194,16 @@ module pocket_ss_bridge #(
         if (bridge_wr && !wr_q && in_win && !wf_full) begin
             wf_push <= 1'b1;
             wf_din  <= {bridge_addr[16:2], bridge_wr_data};
+            l_data  <= 1'b1;
         end
         if (savestate_load && !load_q) begin
-            savestate_load_ack  <= 1'b1;
+            savestate_load_ack <= 1'b1;
+            l_quiet <= '0;
+        end
+        // a new load: armed, not busy, and its data has been written
+        if (savestate_load && !load_q && l_armed && l_data && !savestate_load_busy) begin
+            l_armed             <= 1'b0;
+            l_data              <= 1'b0;
             savestate_load_busy <= 1'b1;
             savestate_load_ok   <= 1'b0;
             savestate_load_err  <= 1'b0;

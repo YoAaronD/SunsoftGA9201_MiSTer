@@ -19,8 +19,10 @@ module pocket_sim_top (
     input  logic        bridge_rd,
     output logic [31:0] ss_bridge_rd_data,     // save-state window (0x4xxxxxxx)
     input  logic        savestate_start,
+    input  logic        savestate_start_query,
     output logic        savestate_start_ack, savestate_start_busy, savestate_start_ok, savestate_start_err,
     input  logic        savestate_load,
+    input  logic        savestate_load_query,
     output logic        savestate_load_ack, savestate_load_busy, savestate_load_ok, savestate_load_err,
     output logic        ss_active,
     output int          dbg_ss_st, dbg_rd_cnt, dbg_reading, dbg_r_idx, dbg_r_on, dbg_rf_empty, dbg_ready,
@@ -82,8 +84,8 @@ module pocket_sim_top (
     logic [31:0] ss_wdata, ss_rdata;
     pocket_ss_bridge u_ss (
         .clk_74a, .bridge_addr, .bridge_rd, .bridge_wr, .bridge_wr_data, .rd_data(ss_bridge_rd_data),
-        .savestate_start, .savestate_start_ack, .savestate_start_busy, .savestate_start_ok, .savestate_start_err,
-        .savestate_load, .savestate_load_ack, .savestate_load_busy, .savestate_load_ok, .savestate_load_err,
+        .savestate_start, .savestate_start_query, .savestate_start_ack, .savestate_start_busy, .savestate_start_ok, .savestate_start_err,
+        .savestate_load, .savestate_load_query, .savestate_load_ack, .savestate_load_busy, .savestate_load_ok, .savestate_load_err,
         .clk, .reset(sys_init),
         .ss_save, .ss_load, .ss_commit, .ss_release, .ss_ready, .ss_done, .ss_err, .ss_active,
         .ss_rd, .ss_wr, .ss_idx, .ss_wdata, .ss_rdata, .ss_ack

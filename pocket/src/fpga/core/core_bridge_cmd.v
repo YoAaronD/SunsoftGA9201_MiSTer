@@ -69,6 +69,8 @@ input   wire            savestate_start_ok,     // assert continuously when done
 input   wire            savestate_start_err,    // assert continuously on error, and clear when new process is started
 
 output  reg             savestate_load,
+output  reg             savestate_start_query,  // (SunsoftGA9201) pulse: 0x00A0 without "Request start"
+output  reg             savestate_load_query,   // (SunsoftGA9201) pulse: 0x00A4 without "Request load"
 input   wire            savestate_load_ack,
 input   wire            savestate_load_busy,
 input   wire            savestate_load_ok,
@@ -195,6 +197,8 @@ initial begin
     rtc_valid <= 0;
     savestate_start <= 0;
     savestate_load <= 0;
+    savestate_start_query <= 0;
+    savestate_load_query <= 0;
     osnotify_inmenu <= 0;
     
     status_setup_done_queue <= 0;
@@ -316,6 +320,8 @@ always @(posedge clk) begin
         dataslot_update <= 0;
         savestate_start <= 0;
         savestate_load <= 0;
+        savestate_start_query <= 0;
+        savestate_load_query <= 0;
         
         // there is no queueing. pocket will always make sure any outstanding host
         // commands are finished before starting another
@@ -418,6 +424,7 @@ always @(posedge clk) begin
                     hstate <= ST_DONE_CODE;
                 end
             end else begin
+                savestate_start_query <= 1;
                 hstate <= ST_DONE_CODE;
             end
         end
@@ -440,6 +447,7 @@ always @(posedge clk) begin
                     hstate <= ST_DONE_CODE;
                 end
             end else begin
+                savestate_load_query <= 1;
                 hstate <= ST_DONE_CODE;
             end
         end

@@ -345,11 +345,13 @@ wire [31:0] savestate_addr = 32'h40000000;
 wire [31:0] savestate_size = 32'h00020000;
 wire [31:0] savestate_maxloadsize = 32'h00020000;
 wire        savestate_start;
+wire        savestate_start_query;
 wire        savestate_start_ack;
 wire        savestate_start_busy;
 wire        savestate_start_ok;
 wire        savestate_start_err;
 wire        savestate_load;
+wire        savestate_load_query;
 wire        savestate_load_ack;
 wire        savestate_load_busy;
 wire        savestate_load_ok;
@@ -411,11 +413,13 @@ core_bridge_cmd icb (
     .savestate_size             ( savestate_size ),
     .savestate_maxloadsize      ( savestate_maxloadsize ),
     .savestate_start            ( savestate_start ),
+    .savestate_start_query      ( savestate_start_query ),
     .savestate_start_ack        ( savestate_start_ack ),
     .savestate_start_busy       ( savestate_start_busy ),
     .savestate_start_ok         ( savestate_start_ok ),
     .savestate_start_err        ( savestate_start_err ),
     .savestate_load             ( savestate_load ),
+    .savestate_load_query       ( savestate_load_query ),
     .savestate_load_ack         ( savestate_load_ack ),
     .savestate_load_busy        ( savestate_load_busy ),
     .savestate_load_ok          ( savestate_load_ok ),
@@ -572,11 +576,13 @@ pocket_ss_bridge u_ss (
     .bridge_wr_data       ( bridge_wr_data ),
     .rd_data              ( ss_bridge_rd_data ),
     .savestate_start      ( savestate_start ),
+    .savestate_start_query( savestate_start_query ),
     .savestate_start_ack  ( savestate_start_ack ),
     .savestate_start_busy ( savestate_start_busy ),
     .savestate_start_ok   ( savestate_start_ok ),
     .savestate_start_err  ( savestate_start_err ),
     .savestate_load       ( savestate_load ),
+    .savestate_load_query ( savestate_load_query ),
     .savestate_load_ack   ( savestate_load_ack ),
     .savestate_load_busy  ( savestate_load_busy ),
     .savestate_load_ok    ( savestate_load_ok ),
