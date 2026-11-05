@@ -788,10 +788,10 @@ module shangha3_board (
     // Same idea as the Taito F2 MiSTer core (wickerwaka); written fresh here.
     //
     // State words (32 bits; ss_idx):
-    //   0000      'GA92'                     0001  version, game id
+    //   0000      'GA92' (not checked)       0001  version, game id
     //   0002      SSP                        0003  vcnt, hcnt, pix_div
     //   0004      irq4, flip, gfxlist, coin  0005  oki data, latch, protection
-    //   0006      bus hold model             0007  reserved
+    //   0006      bus hold model             0007  'GA92' (checked on load)
     //   0400-07FF palette (2 words each)     4000-7FFF work RAM (2 words each)
     //   everything else reads 0 (room for the sound section)
     // ------------------------------------------------------------------
@@ -842,7 +842,9 @@ module shangha3_board (
 
     wire [21:0] ss_pos      = {vcnt, hcnt, pix_div};
     wire        ss_pos_hit  = ss_pos == ss_hdr[3][21:0];
-    wire        ss_hdr_ok   = ss_hdr[0] == SS_MAGIC && ss_hdr[1] == {SS_VERSION, 14'd0, game_id} &&
+    // (word 0 is not checked: on the Pocket the host's first read of the blob
+    // comes back as 0, every time; the marker is checked in word 7)
+    wire        ss_hdr_ok   = ss_hdr[7] == SS_MAGIC && ss_hdr[1] == {SS_VERSION, 14'd0, game_id} &&
                               ss_hdr[3][21:13] < 9'd262 && ss_hdr[3][3:0] < 4'd12;
     assign ss_hdr4 = ss_hdr[4];
     assign ss_hdr5 = ss_hdr[5];
@@ -889,7 +891,7 @@ module shangha3_board (
             3'd4: ss_hdr_now = {6'd0, irq4, dbg_flip, dbg_gfxlist, dbg_coinctrl};
             3'd5: ss_hdr_now = {8'd0, dbg_oki_data, latch_din, prot_cnt, prot_q};
             3'd6: ss_hdr_now = {3'd0, bus_hold, hold_acc};
-            default: ss_hdr_now = 32'd0;
+            default: ss_hdr_now = SS_MAGIC;                // word 7: the marker that is checked
         endcase
     endfunction
 
