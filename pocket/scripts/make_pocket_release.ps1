@@ -1,6 +1,6 @@
 # Make the Analogue Pocket package of the SunsoftGA9201 core (Windows PowerShell 5.1 or PowerShell 7).
 #
-#   powershell -ExecutionPolicy Bypass -File pocket\scripts\make_pocket_release.ps1 [-Date YYYYMMDD]
+#   powershell -ExecutionPolicy Bypass -File pocket\scripts\make_pocket_release.ps1 [-Date YYYYMMDD] [-SdCard E:]
 #
 # Run after a successful Quartus build of pocket\src\fpga\ap_core.qpf. It:
 #   1. bit-reverses pocket\src\fpga\output_files\ap_core.rbf into bitstream.rbf_r
@@ -11,7 +11,10 @@
 #        Assets/ga9201/AjaxHC.SunsoftGA9201/   one .json per game
 #        Assets/ga9201/common/         (put the .rom files here)
 #      Users copy its folders onto the SD card root. ROMs are never included.
-param([string]$Date = (Get-Date -Format 'yyyyMMdd'))
+#   3. with -SdCard (the card's drive, e.g. E:), also unpacks the zip onto the
+#      card's root, replacing the core's files there (the .rom files in
+#      Assets/ga9201/common/ are left alone).
+param([string]$Date = (Get-Date -Format 'yyyyMMdd'), [string]$SdCard = '')
 
 $ErrorActionPreference = 'Stop'
 if ($Date -notmatch '^\d{8}$') { throw "Date must be YYYYMMDD, got '$Date'" }
@@ -56,3 +59,14 @@ try {
     $zip.Dispose()
 }
 Write-Host "Wrote pocket\output\SunsoftGA9201_Pocket_$Date.zip"
+
+# 3. optional: straight onto the SD card
+if ($SdCard -ne '') {
+    $root = $SdCard.TrimEnd('\') + '\'
+    if (-not (Test-Path -LiteralPath $root)) { throw "SD card not found: $root" }
+    if (-not (Test-Path -LiteralPath (Join-Path $root 'Cores'))) {
+        throw "$root has no Cores folder - is this the Pocket's SD card? (boot the Pocket with it once first)"
+    }
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $root -Force
+    Write-Host "Unpacked onto $root - eject the card before taking it out."
+}
