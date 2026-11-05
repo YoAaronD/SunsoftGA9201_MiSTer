@@ -134,7 +134,9 @@ module pocket_ss_bridge #(
 
     wire  [15:0] ridx = {1'b0, bridge_addr[16:2]};
     wire         rhit = ridx < wfill && (wfill - ridx) <= 16'd64;
-    assign rd_data = rhit ? wbuf[ridx[5:0]] : 32'd0;
+    logic [31:0] diag_word;                     // see "Diagnostics" below
+    assign rd_data = (ridx[15:6] == 10'h020) ? diag_word :     // words 0800-083F
+                     rhit ? wbuf[ridx[5:0]] : 32'd0;
     assign rf_rst_a = rst_a_cnt != 0;
 
     initial begin
@@ -334,5 +336,105 @@ module pocket_ss_bridge #(
                 w_last      <= 1'b0;
             end
         end
+    end
+
+    // ------------------------------------------------------------------
+    // Diagnostics: what the host did during the last load (and this save),
+    // served in place of state words 0800-083F (normally zero, ignored on
+    // load). A save made after a failed load carries the record. Temporary.
+    // ------------------------------------------------------------------
+    logic [31:0] dl_wr, dl_wr_first_a, dl_wr_last_a, dl_wr_d0, dl_wr_a1, dl_wr_d1, dl_wr_jumps;
+    logic [31:0] dl_cmd, dl_query, dl_cmd_flags, dl_wr0, dl_wrx;
+    logic [31:0] ds_rd, ds_rd_early;
+    logic [31:0] ds_rd_a [0:7];
+    logic [31:0] dl_last_wa;
+    initial begin
+        dl_wr = 0; dl_wr_first_a = 0; dl_wr_last_a = 0; dl_wr_d0 = 0; dl_wr_a1 = 0; dl_wr_d1 = 0; dl_wr_jumps = 0;
+        dl_cmd = 0; dl_query = 0; dl_cmd_flags = 0; dl_wr0 = 0; dl_wrx = 0; ds_rd = 0; ds_rd_early = 0; dl_last_wa = 0;
+        for (int i = 0; i < 8; i++) ds_rd_a[i] = 0;
+    end
+    always_ff @(posedge clk_74a) begin
+        if (savestate_load_query) begin
+            dl_query <= dl_query + 1;
+            dl_wr <= 0; dl_cmd <= 0; dl_wr_jumps <= 0;
+        end
+        if (bridge_wr && !wr_q) begin
+            if (in_win) begin
+                dl_wr <= dl_wr + 1;
+                if (dl_wr == 0) begin dl_wr_first_a <= bridge_addr; dl_wr_d0 <= bridge_wr_data; end
+                if (dl_wr == 1) begin dl_wr_a1 <= bridge_addr; dl_wr_d1 <= bridge_wr_data; end
+                if (dl_wr != 0 && bridge_addr != dl_last_wa + 32'd4) dl_wr_jumps <= dl_wr_jumps + 1;
+                dl_last_wa   <= bridge_addr;
+                dl_wr_last_a <= bridge_addr;
+            end else if (bridge_addr[31:28] == 4'h0) dl_wr0 <= dl_wr0 + 1;
+            else if (bridge_addr[31:28] != 4'h2 && bridge_addr[31:24] != 8'hF8) dl_wrx <= dl_wrx + 1;
+        end
+        if (savestate_load && !load_q) begin
+            dl_cmd <= dl_cmd + 1;
+            if (dl_cmd == 0) dl_cmd_flags <= {16'd0, 3'd0, l_armed, l_data, savestate_load_busy, savestate_load_ok, savestate_load_err,
+                                              8'd0};
+        end
+        if (savestate_start && !start_q && s_armed && !savestate_start_busy && !(reading && !released)) begin
+            ds_rd <= 0; ds_rd_early <= 0;
+        end
+        if (bridge_rd && !rd_q && in_win) begin
+            ds_rd <= ds_rd + 1;
+            if (!reading) ds_rd_early <= ds_rd_early + 1;
+            if (ds_rd < 8) ds_rd_a[ds_rd[2:0]] <= {wfill, ridx};
+        end
+    end
+    // core-side counters (static by the time they are read; two flops are enough)
+    logic [31:0] dc_w, dc_flags, dc_ev;
+    logic [7:0]  c_err_n, c_done_n, c_commit_n, c_load_n;
+    logic [31:0] dh [0:7];                      // header words as written by the last load
+    logic [31:0] dh_s [0:7];
+    logic [31:0] dc_w_s1, dc_w_s, dc_flags_s1, dc_flags_s, dc_ev_s1, dc_ev_s;
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            c_err_n <= 0; c_done_n <= 0; c_commit_n <= 0; c_load_n <= 0;
+        end else begin
+            if (ss_err)    c_err_n    <= c_err_n + 8'd1;
+            if (ss_done)   c_done_n   <= c_done_n + 8'd1;
+            if (ss_commit) c_commit_n <= c_commit_n + 8'd1;
+            if (ss_load)   c_load_n   <= c_load_n + 8'd1;
+        end
+        if (ss_wr && ss_idx[14:3] == 12'd0) dh[ss_idx[2:0]] <= ss_wdata;
+        dc_w     <= {w_cnt, 1'b0, ss_idx};
+        dc_flags <= {24'd0, w_last, commit_pend, load_pend, w_wait, ss_active, ss_ready, wf_empty, save_pend};
+        dc_ev    <= {c_load_n, c_commit_n, c_done_n, c_err_n};
+    end
+    always_ff @(posedge clk_74a) begin
+        {dc_w_s, dc_w_s1}         <= {dc_w_s1, dc_w};
+        {dc_flags_s, dc_flags_s1} <= {dc_flags_s1, dc_flags};
+        {dc_ev_s, dc_ev_s1}       <= {dc_ev_s1, dc_ev};
+        for (int i = 0; i < 8; i++) dh_s[i] <= dh[i];   // static long before it is read
+    end
+    always_comb begin
+        case (ridx[5:0])
+            6'h00: diag_word = 32'h44494147;             // "DIAG"
+            6'h01: diag_word = dl_wr;                    // window writes since the last load query
+            6'h02: diag_word = dl_wr_first_a;
+            6'h03: diag_word = dl_wr_last_a;
+            6'h04: diag_word = dl_wr_d0;
+            6'h05: diag_word = dl_wr_a1;
+            6'h06: diag_word = dl_wr_d1;
+            6'h07: diag_word = dl_wr_jumps;              // writes not to the previous address + 4
+            6'h08: diag_word = dl_cmd;                   // load command edges since the query
+            6'h09: diag_word = dl_query;                 // load queries (total)
+            6'h0A: diag_word = dl_cmd_flags;             // at the first load command
+            6'h0B: diag_word = {29'd0, savestate_load_busy, savestate_load_ok, savestate_load_err};
+            6'h0C: diag_word = dl_wr0;                   // writes to 0x0xxxxxxx (total)
+            6'h0D: diag_word = dl_wrx;                   // writes elsewhere (total)
+            6'h0E: diag_word = dc_w_s;                   // core: words written, last index
+            6'h0F: diag_word = dc_flags_s;
+            6'h10: diag_word = dc_ev_s;                  // core: loads started, commits, done, errors
+            6'h11: diag_word = ds_rd;                    // this save: read strobes in the window
+            6'h12: diag_word = ds_rd_early;              //   before ok
+            6'h18, 6'h19, 6'h1A, 6'h1B, 6'h1C, 6'h1D, 6'h1E, 6'h1F:
+                   diag_word = ds_rd_a[ridx[2:0]];       //   first 8 reads: {fill, index}
+            6'h20, 6'h21, 6'h22, 6'h23, 6'h24, 6'h25, 6'h26, 6'h27:
+                   diag_word = dh_s[ridx[2:0]];          // header words as the last load wrote them
+            default: diag_word = 32'd0;
+        endcase
     end
 endmodule

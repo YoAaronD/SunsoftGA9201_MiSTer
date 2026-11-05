@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
         uint32_t d = rd1(w);
         rng = rng * 1103515245u + 12345u;
         if ((rng >> 16) % 97 == 0) d = rd1(w);
+        if ((w >> 6) == 0x20) continue;          // 0800-083F: diagnostics (pocket_ss_bridge.sv)
         if (d != (uint32_t)(w * 3 + 1) && bad++ < 5) printf("word %d: %08X\n", w, d);
     }
     for (int i = 0; i < 100; i++) tick();
