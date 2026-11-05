@@ -43,11 +43,17 @@ module pocket_loader (
     logic [56:0] din;                 // {word address [26:2], data}
     logic        rst74_1, rst74;
     logic        ovf74;
+    // Data slots are only loaded while the APF holds the core in reset; once
+    // it runs, writes here are ignored (on hardware a save-state load seems to
+    // send its first word to a wrong address, which started a "download" and
+    // reset the game).
+    logic        run74_1, run74;
     always_ff @(posedge clk_74a) begin
         {rst74, rst74_1} <= {rst74_1, reset};
+        {run74, run74_1} <= {run74_1, running};
         wr_q <= bridge_wr;
         push <= 1'b0;
-        if (bridge_wr && !wr_q && bridge_addr[31:28] == 4'h0) begin
+        if (bridge_wr && !wr_q && bridge_addr[31:28] == 4'h0 && !run74) begin
             push <= 1'b1;
             din  <= {bridge_addr[26:2], bridge_wr_data};
         end
