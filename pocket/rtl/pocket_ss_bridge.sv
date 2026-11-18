@@ -133,6 +133,11 @@ module pocket_ss_bridge #(
     logic [3:0]  rst_a_cnt = 0;
 
     wire  [15:0] ridx = {1'b0, bridge_addr[16:2]};
+    // load: word-shift detection (see "load" below)
+    logic        l_shift = 0;
+    wire         w_at0   = bridge_addr[16:2] == 15'd0;
+    wire         w_shift = w_at0 ? (bridge_wr_data[31:16] == 16'd1 && bridge_wr_data[15:2] == 14'd0) : l_shift;
+    wire  [15:0] widx_s  = ridx + {15'd0, w_shift};
     wire         rhit = ridx < wfill && (wfill - ridx) <= 16'd64;
     logic [31:0] diag_word;                     // see "Diagnostics" below
     assign rd_data = (ridx[15:6] == 10'h020) ? diag_word :     // words 0800-083F
@@ -212,10 +217,19 @@ module pocket_ss_bridge #(
             t_release <= ~t_release;
         end
 
-        // load
+        // load. The Pocket writes a loaded state one word early (hardware,
+        // 20261118 diagnostics): file word k+1 goes to address 4k, so header
+        // word 1 (version, game) arrives at address 0 and the marker at word 6.
+        // The word written to address 0 tells which: header word 1 looks like
+        // {16'd1 (SS_VERSION in shangha3_board.sv), 14'd0, game}; word 0 is
+        // 'GA92' or (as the host saves it) 0. Shifted, every word goes to its
+        // address + 1 and the host's extra last word (past the blob) is dropped.
         if (bridge_wr && !wr_q && in_win && !wf_full) begin
-            wf_push <= 1'b1;
-            wf_din  <= {bridge_addr[16:2], bridge_wr_data};
+            if (w_at0) l_shift <= w_shift;
+            if (widx_s < 16'(NWORDS)) begin
+                wf_push <= 1'b1;
+                wf_din  <= {widx_s[14:0], bridge_wr_data};
+            end
             l_data  <= 1'b1;
         end
         if (savestate_load && !load_q) begin
@@ -430,6 +444,7 @@ module pocket_ss_bridge #(
             6'h10: diag_word = dc_ev_s;                  // core: loads started, commits, done, errors
             6'h11: diag_word = ds_rd;                    // this save: read strobes in the window
             6'h12: diag_word = ds_rd_early;              //   before ok
+            6'h13: diag_word = {31'd0, l_shift};         // last load was written one word early
             6'h18, 6'h19, 6'h1A, 6'h1B, 6'h1C, 6'h1D, 6'h1E, 6'h1F:
                    diag_word = ds_rd_a[ridx[2:0]];       //   first 8 reads: {fill, index}
             6'h20, 6'h21, 6'h22, 6'h23, 6'h24, 6'h25, 6'h26, 6'h27:

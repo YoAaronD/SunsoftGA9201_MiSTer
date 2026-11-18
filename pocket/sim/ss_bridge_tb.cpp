@@ -74,7 +74,12 @@ int main(int argc, char** argv) {
       printf("extra poll after the read-out: busy=%d ok=%d (expect 0 1)\n", (int)t->savestate_start_busy, (int)t->savestate_start_ok); }
     for (int order = 0; order < 1; order++) {
         std::fill(mem.begin(), mem.end(), 0);
-        auto wr1 = [&](int w) { t->bridge_addr = 0x40000000u + 4u * w; t->bridge_wr_data = w ^ 0x5A5A0000u ^ round;
+        // the blob as saved: word 0 = 0 (the host loses it), word 1 = version/game
+        // header word, the rest arbitrary. Round 1 writes it as the Pocket does
+        // (hardware, 20261118): file word k+1 to address k, one extra word at the end.
+        const bool shifted = round == 1;
+        auto fw = [&](int k) -> uint32_t { return k == 0 || k >= 32768 ? 0u : k == 1 ? 0x00010000u : (k ^ 0x5A5A0000u ^ round); };
+        auto wr1 = [&](int w) { t->bridge_addr = 0x40000000u + 4u * w; t->bridge_wr_data = fw(shifted ? w + 1 : w);
             aw(1); t->bridge_wr = 1; aw(1); t->bridge_wr = 0; aw(38); };
         auto words = [&]() { for (int w = 0; w < 32768; w++) { if (w % 256 == 0) wr1(w); wr1(w); } };
         // query, data, then the load command polled until ok/err
@@ -87,8 +92,10 @@ int main(int argc, char** argv) {
             aw(1); t->savestate_load = 0; aw(200); lp++;
         }
         printf("load: %d polls\n", lp);
-        int wbad = 0; for (int w = 0; w < 32768; w++) if (mem[w] != (uint32_t)(w ^ 0x5A5A0000u ^ round)) wbad++;
-        printf("load %d: ok=%d err=%d, %d words wrong\n", round, (int)t->savestate_load_ok, (int)t->savestate_load_err, wbad);
+        int wbad = 0; for (int w = 1; w < 32768; w++) if (mem[w] != fw(w)) wbad++;   // word 0 is not checked by the board
+        printf("load %d (%s): ok=%d err=%d, %d words wrong (words 1-32767)\n", round,
+               shifted ? "Pocket's one-word-early writes" : "aligned", (int)t->savestate_load_ok,
+               (int)t->savestate_load_err, wbad);
     }
   }
     return 0;
