@@ -656,9 +656,18 @@ module shangha3_board (
     // ------------------------------------------------------------------
     logic [3:0] wait_cnt;
     logic       ready;
-    wire        blit_wr_conflict = blit_busy && !cpu_rw &&
+    // The compare is registered (timing: blitter state -> compare -> RAM write
+    // enable was the 96 MHz clock's critical path on the Pocket, build 10). A
+    // write therefore waits for the second clock of its bus cycle, when the
+    // registered result belongs to the cycle's own address. One clock stale is
+    // safe: a run only starts from a CPU write to the blitter's go register,
+    // never within a clock of a RAM write, and while it runs scan_from and
+    // tm_from only move up (the stale value is the more cautious one).
+    wire        blit_wr_conflict_now = blit_busy && !cpu_rw &&
                                    ({4'b0, ram_a} >= blit_scan_from ||
                                     ({1'b0, ram_a} >= {1'b0, blit_tm_from} && ram_a < 15'h2000));
+    logic       blit_wr_conflict;
+    always_ff @(posedge clk) blit_wr_conflict <= blit_wr_conflict_now;
 
     // work RAM write: once per bus cycle, as soon as there is no conflict
     logic ram_wr_done;
@@ -666,7 +675,7 @@ module shangha3_board (
         if (reset || !cpu_cyc) ram_wr_done <= 1'b0;
         else if (ram_we)       ram_wr_done <= 1'b1;
     end
-    assign ram_we = cpu_cyc && sel_ram && !cpu_rw && !ram_wr_done && !blit_wr_conflict;
+    assign ram_we = cpu_cyc && cpu_cyc_d && sel_ram && !cpu_rw && !ram_wr_done && !blit_wr_conflict;
 
     // ------------------------------------------------------------------
     // Blitter bus hold (v0.1.10), a calibrated model of the real chip's speed.
