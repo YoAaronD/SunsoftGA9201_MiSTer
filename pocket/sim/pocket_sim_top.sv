@@ -47,6 +47,8 @@ module pocket_sim_top (
     output int          copies,         // vblank copies seen
     output int          copy_min,       // shortest / longest draw-buffer read (clocks)
     output int          copy_max,
+    input  logic [16:0] dbg_fb_a,       // draw buffer peek (save-state wake test)
+    output logic [11:0] dbg_fb_q,
 
     output logic        SDRAM_CLK,
     output logic        SDRAM_CKE,
@@ -80,7 +82,7 @@ module pocket_sim_top (
 
     logic        ss_save, ss_load, ss_commit, ss_release, ss_ready, ss_done, ss_err;
     logic        ss_rd, ss_wr, ss_ack;
-    logic [14:0] ss_idx;
+    logic [16:0] ss_idx;
     logic [31:0] ss_wdata, ss_rdata;
     pocket_ss_bridge u_ss (
         .clk_74a, .bridge_addr, .bridge_rd, .bridge_wr, .bridge_wr_data, .rd_data(ss_bridge_rd_data),
@@ -92,7 +94,7 @@ module pocket_sim_top (
     );
 
     assign dbg_ss_st    = int'(u_core.u_board.ss_st);
-    assign dbg_rd_cnt   = int'(u_ss.rd_cnt);
+    assign dbg_rd_cnt   = int'(u_ss.wfill);     // (rd_cnt is gone: words streamed into the read window)
     assign dbg_reading  = int'(u_ss.reading);
     assign dbg_r_idx    = int'(u_ss.r_idx);
     assign dbg_r_on     = int'(u_ss.r_on);
@@ -164,4 +166,5 @@ module pocket_sim_top (
             clen <= 0;
         end
     end
+    assign dbg_fb_q = u_core.u_board.u_video.u_fb_draw.mem[dbg_fb_a];
 endmodule

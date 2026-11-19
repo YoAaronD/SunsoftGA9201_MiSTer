@@ -18,7 +18,7 @@
 
 module pocket_ss_bridge #(
     parameter logic [3:0] BASE_NIB = 4'h4,      // window 0x4000_0000
-    parameter int         NWORDS   = 32768      // 128 KB
+    parameter int         NWORDS   = 75776      // 296 KB: words 0000-7FFF + draw buffer 8000-127FF (shangha3_board.sv)
 ) (
     // clk_74a side
     input  logic        clk_74a,
@@ -54,12 +54,13 @@ module pocket_ss_bridge #(
     input  logic        ss_active,
     output logic        ss_rd,
     output logic        ss_wr,
-    output logic [14:0] ss_idx,
+    output logic [16:0] ss_idx,
     output logic [31:0] ss_wdata,
     input  logic [31:0] ss_rdata,
     input  logic        ss_ack
 );
-    localparam logic [15:0] LAST = 16'(NWORDS - 1);
+    localparam logic [16:0] LAST = 17'(NWORDS - 1);
+    localparam logic [15:0] SS_VERSION = 16'd2;   // = SS_VERSION in shangha3_board.sv (state header word 1)
 
     // ------------------------------------------------------------------
     // Toggle synchronisers between the two clocks
@@ -99,8 +100,8 @@ module pocket_ss_bridge #(
     );
 
     logic        wf_push, wf_full, wf_pop, wf_empty;
-    logic [46:0] wf_din, wf_dout;
-    pocket_afifo #(.W(47), .AW(4)) u_wf (
+    logic [48:0] wf_din, wf_dout;
+    pocket_afifo #(.W(49), .AW(4)) u_wf (
         .wclk(clk_74a), .wrst(1'b0), .push(wf_push), .din(wf_din), .full(wf_full),
         .rclk(clk), .rrst(reset), .pop(wf_pop), .dout(wf_dout), .empty(wf_empty)
     );
@@ -117,8 +118,8 @@ module pocket_ss_bridge #(
     // a stream popped once per read drifted one word every 1 KB), so the
     // read strobes are not counted; the address decides.
     logic [31:0] wbuf [0:63];
-    logic [15:0] wfill = 0;                     // words in the buffer so far (stream position)
-    logic [15:0] rmax  = 0;                     // highest address read + 1
+    logic [16:0] wfill = 0;                     // words in the buffer so far (stream position)
+    logic [16:0] rmax  = 0;                     // highest address read + 1
     logic        released = 0;
     logic        reading = 0;
     logic        ok_pend = 0;
@@ -132,15 +133,15 @@ module pocket_ss_bridge #(
     logic [27:0] idle_cnt = 0;                  // host stopped reading: resume after ~1.8 s
     logic [3:0]  rst_a_cnt = 0;
 
-    wire  [15:0] ridx = {1'b0, bridge_addr[16:2]};
+    wire  [16:0] ridx = bridge_addr[18:2];
     // load: word-shift detection (see "load" below)
     logic        l_shift = 0;
-    wire         w_at0   = bridge_addr[16:2] == 15'd0;
-    wire         w_shift = w_at0 ? (bridge_wr_data[31:16] == 16'd1 && bridge_wr_data[15:2] == 14'd0) : l_shift;
-    wire  [15:0] widx_s  = ridx + {15'd0, w_shift};
-    wire         rhit = ridx < wfill && (wfill - ridx) <= 16'd64;
+    wire         w_at0   = bridge_addr[18:2] == 17'd0;
+    wire         w_shift = w_at0 ? (bridge_wr_data[31:16] == SS_VERSION && bridge_wr_data[15:2] == 14'd0) : l_shift;
+    wire  [17:0] widx_s  = {1'b0, ridx} + {17'd0, w_shift};
+    wire         rhit = ridx < wfill && (wfill - ridx) <= 17'd64;
     logic [31:0] diag_word;                     // see "Diagnostics" below
-    assign rd_data = (ridx[15:6] == 10'h020) ? diag_word :     // words 0800-083F
+    assign rd_data = (ridx[16:6] == 11'h020) ? diag_word :     // words 0800-083F
                      rhit ? wbuf[ridx[5:0]] : 32'd0;
     assign rf_rst_a = rst_a_cnt != 0;
 
@@ -185,7 +186,7 @@ module pocket_ss_bridge #(
         // ready: report ok once the first words are in the FIFO (the host
         // may start reading as soon as it sees ok)
         if (a_ready) ok_pend <= 1'b1;
-        if (ok_pend && (wfill >= 16'd32 || wfill == 16'(NWORDS))) begin
+        if (ok_pend && (wfill >= 17'd32 || wfill == 17'(NWORDS))) begin
             ok_pend              <= 1'b0;
             savestate_start_busy <= 1'b0;
             savestate_start_ok   <= 1'b1;
@@ -198,16 +199,16 @@ module pocket_ss_bridge #(
         // fill the window from the stream (one word every other clock: the
         // FIFO's head changes the clock after a pop)
         if ((ok_pend || reading) && !rf_pop && !rf_empty && !rf_rst_a &&
-            wfill != 16'(NWORDS) && wfill < rmax + 16'd32) begin
+            wfill != 17'(NWORDS) && wfill < rmax + 17'd32) begin
             wbuf[wfill[5:0]] <= rf_dout;
             rf_pop <= 1'b1;
-            wfill  <= wfill + 16'd1;
+            wfill  <= wfill + 17'd1;
         end
         // reads: the address decides; the last address releases the board
         if (reading && !released) idle_cnt <= idle_cnt + 28'd1;
         if (bridge_rd && !rd_q && in_win && reading) begin
             idle_cnt <= '0;
-            if (ridx + 16'd1 > rmax) rmax <= ridx + 16'd1;
+            if (ridx + 17'd1 > rmax) rmax <= ridx + 17'd1;
             if (ridx == LAST && !released) begin
                 released  <= 1'b1;
                 t_release <= ~t_release;
@@ -221,14 +222,14 @@ module pocket_ss_bridge #(
         // 20261118 diagnostics): file word k+1 goes to address 4k, so header
         // word 1 (version, game) arrives at address 0 and the marker at word 6.
         // The word written to address 0 tells which: header word 1 looks like
-        // {16'd1 (SS_VERSION in shangha3_board.sv), 14'd0, game}; word 0 is
+        // {SS_VERSION, 14'd0, game}; word 0 is
         // 'GA92' or (as the host saves it) 0. Shifted, every word goes to its
         // address + 1 and the host's extra last word (past the blob) is dropped.
         if (bridge_wr && !wr_q && in_win && !wf_full) begin
             if (w_at0) l_shift <= w_shift;
-            if (widx_s < 16'(NWORDS)) begin
+            if (widx_s < 18'(NWORDS)) begin
                 wf_push <= 1'b1;
-                wf_din  <= {widx_s[14:0], bridge_wr_data};
+                wf_din  <= {widx_s[16:0], bridge_wr_data};
             end
             l_data  <= 1'b1;
         end
@@ -260,7 +261,7 @@ module pocket_ss_bridge #(
     // streamer and the write feeder
     // ------------------------------------------------------------------
     logic        save_pend, load_pend, commit_pend;
-    logic [15:0] r_idx, w_cnt;
+    logic [16:0] r_idx, w_cnt;
     logic        w_last;                    // the blob's last word has been written
     logic        r_on, r_wait, w_wait;
     logic        ready_q;
@@ -309,14 +310,14 @@ module pocket_ss_bridge #(
             end
             if (r_on && !r_wait && !rf_push && !rf_full && !rf_rst_c) begin   // (full is stale while a push lands)
                 ss_rd  <= 1'b1;
-                ss_idx <= r_idx[14:0];
+                ss_idx <= r_idx;
                 r_wait <= 1'b1;
             end
             if (r_wait && ss_ack) begin
                 rf_push <= 1'b1;
                 rf_din  <= ss_rdata;
                 r_wait  <= 1'b0;
-                r_idx   <= r_idx + 16'd1;
+                r_idx   <= r_idx + 17'd1;
                 if (r_idx == LAST) r_on <= 1'b0;
             end
             if (c_release) ss_release <= 1'b1;
@@ -327,7 +328,7 @@ module pocket_ss_bridge #(
                     load_pend <= 1'b1;
                 end else if (!ss_ready) begin       // (not during a save read-out)
                     ss_wr    <= 1'b1;
-                    ss_idx   <= wf_dout[46:32];
+                    ss_idx   <= wf_dout[48:32];
                     ss_wdata <= wf_dout[31:0];
                     w_wait   <= 1'b1;
                 end
@@ -335,8 +336,8 @@ module pocket_ss_bridge #(
             if (w_wait && ss_ack) begin
                 w_wait <= 1'b0;
                 wf_pop <= 1'b1;
-                w_cnt  <= w_cnt + 16'd1;
-                if (ss_idx == LAST[14:0]) w_last <= 1'b1;
+                w_cnt  <= w_cnt + 17'd1;
+                if (ss_idx == LAST) w_last <= 1'b1;
             end
             ss_load <= load_pend && !ss_active;
             if (load_pend && ss_active) load_pend <= 1'b0;
@@ -394,7 +395,7 @@ module pocket_ss_bridge #(
         if (bridge_rd && !rd_q && in_win) begin
             ds_rd <= ds_rd + 1;
             if (!reading) ds_rd_early <= ds_rd_early + 1;
-            if (ds_rd < 8) ds_rd_a[ds_rd[2:0]] <= {wfill, ridx};
+            if (ds_rd < 8) ds_rd_a[ds_rd[2:0]] <= {wfill[15:0], ridx[15:0]};
         end
     end
     // core-side counters (static by the time they are read; two flops are enough)
@@ -412,8 +413,8 @@ module pocket_ss_bridge #(
             if (ss_commit) c_commit_n <= c_commit_n + 8'd1;
             if (ss_load)   c_load_n   <= c_load_n + 8'd1;
         end
-        if (ss_wr && ss_idx[14:3] == 12'd0) dh[ss_idx[2:0]] <= ss_wdata;
-        dc_w     <= {w_cnt, 1'b0, ss_idx};
+        if (ss_wr && ss_idx[16:3] == 14'd0) dh[ss_idx[2:0]] <= ss_wdata;
+        dc_w     <= {w_cnt[14:0], ss_idx};
         dc_flags <= {24'd0, w_last, commit_pend, load_pend, w_wait, ss_active, ss_ready, wf_empty, save_pend};
         dc_ev    <= {c_load_n, c_commit_n, c_done_n, c_err_n};
     end

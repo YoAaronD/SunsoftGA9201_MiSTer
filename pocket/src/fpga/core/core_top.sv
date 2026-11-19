@@ -339,11 +339,11 @@ wire [31:0] rtc_date_bcd;
 wire [31:0] rtc_time_bcd;
 wire        rtc_valid;
 
-// save states / sleep: pocket/rtl/pocket_ss_bridge.sv (blob of 32768 words at 0x40000000)
+// save states / sleep: pocket/rtl/pocket_ss_bridge.sv (blob of 75776 words at 0x40000000: board state + draw buffer)
 wire        savestate_supported = 1;
 wire [31:0] savestate_addr = 32'h40000000;
-wire [31:0] savestate_size = 32'h00020000;
-wire [31:0] savestate_maxloadsize = 32'h00020000;
+wire [31:0] savestate_size = 32'h0004A000;        // 75776 words (pocket_ss_bridge NWORDS)
+wire [31:0] savestate_maxloadsize = 32'h0004A000;
 wire        savestate_start;
 wire        savestate_start_query;
 wire        savestate_start_ack;
@@ -565,7 +565,7 @@ wire        sd_cs_n, sd_ras_n, sd_cas_n, sd_we_n, sd_dqml, sd_dqmh;
 
 wire        ss_save, ss_load, ss_commit, ss_release, ss_ready, ss_done, ss_err, ss_active;
 wire        ss_rd, ss_wr, ss_ack;
-wire [14:0] ss_idx;
+wire [16:0] ss_idx;
 wire [31:0] ss_wdata, ss_rdata;
 
 pocket_ss_bridge u_ss (

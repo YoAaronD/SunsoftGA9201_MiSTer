@@ -81,6 +81,8 @@ int main(int argc, char** argv) {
     std::string frames_out, stream_path, wav_path;
     int game = 0, frames = 10, every = 30, load_gap = 75;
     int ss_at = 0;                 // --ss-test N: save state at frame N, run on, load it, compare
+    bool ss_wake = false;          // --ss-wake: reset the game (blank draw buffer, reboot) before the load, as a Pocket wake does
+    struct Press { int mask, from, len; }; std::vector<Press> presses;   // --press MASK FROM LEN (SYSTEM bits, hex: 01 coin, 08 start)
     std::string ss_out = ".";
     bool direct = false;
     uint64_t release_at = 0;
@@ -96,6 +98,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "--direct")) direct = true;
         else if (!strcmp(argv[i], "--ss-test") && i + 1 < argc) ss_at = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--ss-out") && i + 1 < argc) ss_out = argv[++i];
+        else if (!strcmp(argv[i], "--ss-wake")) ss_wake = true;
+        else if (!strcmp(argv[i], "--press") && i + 3 < argc) { int m = strtol(argv[i + 1], 0, 16); presses.push_back({m, atoi(argv[i + 2]), atoi(argv[i + 3])}); i += 3; }
     }
     if (stream_path.empty()) { fprintf(stderr, "need --stream <file>\n"); return 1; }
     std::vector<uint8_t> stream = load(stream_path);
@@ -226,7 +230,12 @@ int main(int argc, char** argv) {
 
     // ---- save-state test through the APF bridge (pocket_ss_bridge.sv)
     auto a_wait = [&](long n) { long a0 = a74_cycles; while (a74_cycles - a0 < n) tick(); };
+    int fcount = 0;                             // frames since the game was released (for --press)
     auto run_frame = [&]() -> uint64_t {        // to the next start of vblank; frame hash
+        int sys = 0x7f;
+        for (auto& p : presses) if (fcount >= p.from && fcount < p.from + p.len) sys &= ~p.mask;
+        top->in_system = sys;
+        fcount++;
         for (;;) { tick(); bool e = top->vblank && !prev_vblank; prev_vblank = top->vblank; if (e) break; }
         uint64_t h = 1469598103934665603ull; for (auto b : img) { h ^= b; h *= 1099511628211ull; } return h;
     };
@@ -234,7 +243,7 @@ int main(int argc, char** argv) {
         if (FILE* o = fopen(p.c_str(), "wb")) { fprintf(o, "P6\n384 224\n255\n"); fwrite(img.data(), 1, img.size(), o); fclose(o); }
     };
     if (ss_at) {
-        const int N = 32768, M = 60;
+        const int N = 75776, M = 60;              // pocket_ss_bridge NWORDS
         for (int f = 0; f < ss_at; f++) { run_frame(); if ((f + 1) % 100 == 0) { printf("frame %d\n", f + 1); fflush(stdout); } }
         // 1) save: command, then read the blob back word by word
         uint64_t c0 = cycle;
@@ -252,6 +261,20 @@ int main(int argc, char** argv) {
         if (top->savestate_start_err) { printf("FAIL: save error\n"); return 1; }
         printf("save: ok after %.2f ms\n", (cycle - c0) / 96000.0);
         std::vector<uint32_t> blob(N);
+        // the board is frozen now: snapshot the draw buffer to check the blob against
+        const int FBW = 384 * 224 / 2, FBB = 0x8000;
+        auto fb_peek = [&](std::vector<uint16_t>& v) { v.resize(2 * FBW);
+            for (int a = 0; a < 2 * FBW; a++) { top->dbg_fb_a = a; top->eval(); v[a] = top->dbg_fb_q; } };
+        auto fb_cmp = [&](const std::vector<uint16_t>& v, const char* what) {
+            int bad = 0, nz = 0, firstbad = -1;
+            for (int w = 0; w < FBW; w++) {
+                uint32_t e = ((uint32_t)v[2 * w] << 16) | v[2 * w + 1];
+                if (e) nz++;
+                if (blob[FBB + w] != e) { bad++; if (firstbad < 0) firstbad = w; }
+            }
+            printf("%s: draw buffer vs blob: %d of %d words differ (first %d), %d nonzero words\n", what, bad, FBW, firstbad, nz);
+            return bad; };
+        std::vector<uint16_t> fb_saved; fb_peek(fb_saved);
         uint64_t r0 = cycle;
         printf("  [ok seen] ss_st %d rd_cnt %d reading %d r_idx %d r_on %d rf_empty %d\n", top->dbg_ss_st, top->dbg_rd_cnt, top->dbg_reading, top->dbg_r_idx, top->dbg_r_on, top->dbg_rf_empty);
         for (int w = 0; w < N; w++) {
@@ -263,6 +286,7 @@ int main(int argc, char** argv) {
             a_wait(36);                         // the next word's address over SPI
         }
         printf("save: %d words read in %.1f ms; header %08X %08X %08X %08X\n", N, (cycle - r0) / 96000.0, blob[0], blob[1], blob[2], blob[3]);
+        int fb_bad_save = fb_cmp(fb_saved, "save");
         if (FILE* o = fopen((ss_out + "/pocket_blob.bin").c_str(), "wb")) { fwrite(blob.data(), 4, N, o); fclose(o); }
         uint64_t q0 = cycle;
         auto dbg = [&](const char* w) { printf("  [%s] ss_st %d rd_cnt %d reading %d r_idx %d r_on %d rf_empty %d ready %d active %d\n", w,
@@ -273,8 +297,15 @@ int main(int argc, char** argv) {
         std::vector<uint64_t> ref(M);
         for (int f = 0; f < M; f++) ref[f] = run_frame();
         save_img(ss_out + "/pocket_ref_end.ppm");
-        // 2) run on for a while, then load the blob: words first, then the command
-        for (int f = 0; f < 150; f++) run_frame();
+        // 2) run on for a while (or, with --ss-wake, reset the game as a Pocket
+        //    wake does: draw buffer blanked, game reboots), then load the blob
+        if (ss_wake) {
+            top->reset = 1; for (int i = 0; i < 2000; i++) tick(); top->reset = 0;
+            for (int i = 0; i < 200000; i++) tick();         // draw-buffer clear sweep (0.9 ms) and more
+            std::vector<uint16_t> v; fb_peek(v); int nz = 0; for (auto x : v) if (x) nz++;
+            printf("wake: game reset, draw buffer has %d nonzero pixels\n", nz);
+            for (int f = 0; f < 60; f++) run_frame();
+        } else for (int f = 0; f < 150; f++) run_frame();
         save_img(ss_out + "/pocket_before_load.ppm");
         uint64_t l0 = cycle;
         top->savestate_load_query = 1; a_wait(1); top->savestate_load_query = 0; a_wait(200);
@@ -282,6 +313,8 @@ int main(int argc, char** argv) {
             top->bridge_addr = 0x40000000u + 4u * w; top->bridge_wr_data = blob[w];
             a_wait(1); top->bridge_wr = 1; a_wait(1); top->bridge_wr = 0; a_wait(38);
         }
+        std::vector<uint16_t> fb_loaded; fb_peek(fb_loaded);   // board held: all words are in
+        int fb_bad_load = fb_cmp(fb_loaded, "load");
         {
             int lp = 0;
             for (;;) {
@@ -300,6 +333,7 @@ int main(int argc, char** argv) {
         save_img(ss_out + "/pocket_load_end.ppm");
         printf("after load: %d/%d frames differ from the run after the save (first %d, last %d)\n", nd, M, first, last);
         printf("cellular RAM protocol errors: %d\n", top->cram_errors);
+        printf("RESULT: draw buffer %s (save %d, load %d words differ)\n", fb_bad_save || fb_bad_load ? "FAIL" : "ok", fb_bad_save, fb_bad_load);
         return 0;
     }
 

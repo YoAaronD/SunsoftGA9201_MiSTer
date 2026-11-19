@@ -10,7 +10,8 @@ int main(int argc, char** argv) {
     Verilated::commandArgs(argc, argv);
     auto* t = new Vpocket_ss_bridge;
     const double HS = 1e6/96.0/2.0, HA = 1e6/74.25/2.0; double ns = HS, na = HA;
-    long a74 = 0; int pend = -1, cnt = 0, st = 0; std::vector<uint32_t> mem(32768, 0);
+    const int NW = 75776;   // pocket_ss_bridge NWORDS
+    long a74 = 0; int pend = -1, cnt = 0, st = 0; std::vector<uint32_t> mem(NW, 0);
     auto edge_c = [&](int v) {
         t->clk = v;
         if (v) {   // fake board responds on rising core edges (before eval sees new inputs)
@@ -59,7 +60,7 @@ int main(int argc, char** argv) {
     };
     // as seen on hardware: 1 KB chunks, an extra read at each chunk start,
     // and now and then a word read twice
-    for (int w = 0; w < 32768; w++) {
+    for (int w = 0; w < NW; w++) {
         if (w % 256 == 0) rd1(w);
         uint32_t d = rd1(w);
         rng = rng * 1103515245u + 12345u;
@@ -78,10 +79,10 @@ int main(int argc, char** argv) {
         // header word, the rest arbitrary. Round 1 writes it as the Pocket does
         // (hardware, 20261118): file word k+1 to address k, one extra word at the end.
         const bool shifted = round == 1;
-        auto fw = [&](int k) -> uint32_t { return k == 0 || k >= 32768 ? 0u : k == 1 ? 0x00010000u : (k ^ 0x5A5A0000u ^ round); };
+        auto fw = [&](int k) -> uint32_t { return k == 0 || k >= NW ? 0u : k == 1 ? 0x00020000u : (k ^ 0x5A5A0000u ^ round); };
         auto wr1 = [&](int w) { t->bridge_addr = 0x40000000u + 4u * w; t->bridge_wr_data = fw(shifted ? w + 1 : w);
             aw(1); t->bridge_wr = 1; aw(1); t->bridge_wr = 0; aw(38); };
-        auto words = [&]() { for (int w = 0; w < 32768; w++) { if (w % 256 == 0) wr1(w); wr1(w); } };
+        auto words = [&]() { for (int w = 0; w < NW; w++) { if (w % 256 == 0) wr1(w); wr1(w); } };
         // query, data, then the load command polled until ok/err
         t->savestate_load_query = 1; aw(1); t->savestate_load_query = 0; aw(200);
         words();
@@ -92,10 +93,10 @@ int main(int argc, char** argv) {
             aw(1); t->savestate_load = 0; aw(200); lp++;
         }
         printf("load: %d polls\n", lp);
-        int wbad = 0; for (int w = 1; w < 32768; w++) if (mem[w] != fw(w)) wbad++;   // word 0 is not checked by the board
-        printf("load %d (%s): ok=%d err=%d, %d words wrong (words 1-32767)\n", round,
+        int wbad = 0; for (int w = 1; w < NW; w++) if (mem[w] != fw(w)) wbad++;   // word 0 is not checked by the board
+        printf("load %d (%s): ok=%d err=%d, %d words wrong (words 1-%d)\n", round,
                shifted ? "Pocket's one-word-early writes" : "aligned", (int)t->savestate_load_ok,
-               (int)t->savestate_load_err, wbad);
+               (int)t->savestate_load_err, wbad, NW - 1);
     }
   }
     return 0;

@@ -20,7 +20,7 @@ module shangha3_top (
     output logic        ss_active,
     input  logic        ss_rd,
     input  logic        ss_wr,
-    input  logic [14:0] ss_idx,
+    input  logic [16:0] ss_idx,
     input  logic [31:0] ss_wdata,
     output logic [31:0] ss_rdata,
     output logic        ss_ack,

@@ -40,7 +40,7 @@ module shangha3_board (
     output logic        ss_active,    // a save or load is in progress
     input  logic        ss_rd,        // pulse: read 32-bit state word ss_idx
     input  logic        ss_wr,        // pulse: write ss_wdata to state word ss_idx
-    input  logic [14:0] ss_idx,
+    input  logic [16:0] ss_idx,
     input  logic [31:0] ss_wdata,
     output logic [31:0] ss_rdata,
     output logic        ss_ack,       // pulse: ss_rdata valid / write done
@@ -397,9 +397,18 @@ module shangha3_board (
     // ------------------------------------------------------------------
     // Blitter + frame buffers
     // ------------------------------------------------------------------
-    logic [16:0] fb_addr;
-    logic        fb_we;
-    logic [11:0] fb_wdata, fb_rdata;
+    logic [16:0] fb_addr, blt_fb_addr;
+    logic        fb_we, blt_fb_we;
+    logic [11:0] fb_wdata, fb_rdata, blt_fb_wdata;
+    // the save-state engine owns the draw buffer's blitter port while the
+    // board is frozen (SS_HOLD: blitter idle, pixel clock stopped)
+    logic        ss_fown;
+    logic [16:0] ss_fa;
+    logic        ss_fwe;
+    logic [11:0] ss_fwd;
+    assign fb_addr  = ss_fown ? ss_fa  : blt_fb_addr;
+    assign fb_we    = ss_fown ? ss_fwe : blt_fb_we;
+    assign fb_wdata = ss_fown ? ss_fwd : blt_fb_wdata;
     logic        fb_copying;
     logic        blit_busy;
     logic        blit_px_step;
@@ -421,7 +430,7 @@ module shangha3_board (
         .ram_addr  (blit_ram_addr),
         .ram_q     (blit_ram_q),
         .gfx_req, .gfx_addr, .gfx_ack, .gfx_data,
-        .fb_addr, .fb_we, .fb_wdata, .fb_rdata
+        .fb_addr(blt_fb_addr), .fb_we(blt_fb_we), .fb_wdata(blt_fb_wdata), .fb_rdata
     );
 
     shangha3_video u_video (
@@ -774,8 +783,10 @@ module shangha3_board (
     // is latched. From then on the CPU is held in reset and the whole machine
     // state is: work RAM, palette, ss_ssp, the video position and a few
     // registers, all readable as 32-bit "state words" (ss_rd / ss_idx).
-    // Not saved, measured in simulation (SAVESTATE_PLAN.md): the draw buffer
-    // (redrawn within 1-3 frames), blitter snapshots, display path, memory
+    // The draw buffer is saved too: the games blit a stage's background once
+    // and redraw only the tiles every frame (seen on the Pocket: background
+    // missing after sleep/wake without it). Not saved, measured in simulation
+    // (SAVESTATE_PLAN.md): blitter snapshots, display path, memory
     // controllers and caches (they hold ROM copies only).
     //
     // Leaving (after a save has been read out, or after a load): the CPU is
@@ -793,10 +804,11 @@ module shangha3_board (
     //   0004      irq4, flip, gfxlist, coin  0005  oki data, latch, protection
     //   0006      bus hold model             0007  'GA92' (checked on load)
     //   0400-07FF palette (2 words each)     4000-7FFF work RAM (2 words each)
+    //   8000-127FF draw buffer, 2 pixels per word {4'd0, pixel 2n, 4'd0, pixel 2n+1}
     //   everything else reads 0 (room for the sound section)
     // ------------------------------------------------------------------
     localparam logic [31:0] SS_MAGIC   = 32'h47413932;            // "GA92"
-    localparam logic [15:0] SS_VERSION = 16'd1;
+    localparam logic [15:0] SS_VERSION = 16'd2;        // 2: draw buffer added (pocket_ss_bridge.sv checks it too)
 `ifdef SS_SIM_GUARD
     localparam int          SS_MIN_FRAMES = `SS_SIM_GUARD;        // simulation only: shorter runs
 `else
@@ -898,22 +910,29 @@ module shangha3_board (
     // state word access (only while the 68000 is held: LWAIT / HOLD)
     logic        m_busy, m_wr;
     logic [2:0]  m_step;
-    logic [14:0] m_idx;
+    logic [16:0] m_idx;
     logic [31:0] m_wd;
-    wire         m_hdr = m_idx[14:3] == 12'd0;
-    wire         m_pal = m_idx[14:10] == 5'b00001;
-    wire         m_ram = m_idx[14];
+    localparam logic [16:0] SS_FB_BASE  = 17'h08000;
+    localparam int          SS_FB_WORDS = 384 * 224 / 2;           // 43008
+    wire         m_hdr = m_idx[16:3] == 14'd0;
+    wire         m_pal = m_idx[16:10] == 7'b0000001;
+    wire         m_ram = m_idx[16:14] == 3'b001;
+    wire  [16:0] m_fbw = m_idx - SS_FB_BASE;                      // word in the draw buffer
+    wire         m_fb  = m_idx >= SS_FB_BASE && m_fbw < 17'(SS_FB_WORDS);
     wire         ss_held = ss_st == SS_LWAIT || ss_st == SS_HOLD;
 
     always_ff @(posedge clk) begin
         ss_ack     <= 1'b0;
         ss_mwe_ram <= 1'b0;
         ss_mwe_pal <= 1'b0;
+        ss_fwe     <= 1'b0;
         if (reset) begin
-            m_busy <= 1'b0;
-            ss_mem <= 1'b0;
+            m_busy  <= 1'b0;
+            ss_mem  <= 1'b0;
+            ss_fown <= 1'b0;
         end else begin
-            ss_mem <= ss_held;
+            ss_mem  <= ss_held;
+            ss_fown <= ss_st == SS_HOLD;
             if (!m_busy) begin
                 if ((ss_rd || ss_wr) && ss_held) begin
                     m_busy <= 1'b1;
@@ -924,6 +943,34 @@ module shangha3_board (
                 end else if (ss_rd || ss_wr) begin
                     ss_rdata <= 32'd0;          // not held: nothing to access
                     ss_ack   <= 1'b1;
+                end
+            end else if (m_fb && !ss_fown) begin
+                // draw buffer: wait for SS_HOLD (during SS_LWAIT the blitter may still run)
+            end else if (m_fb) begin
+                // draw buffer: two pixels, same timing as the RAM below
+                m_step <= m_step + 3'd1;
+                if (m_wr) begin
+                    ss_fa  <= {m_fbw[15:0], m_step[0]};
+                    ss_fwd <= m_step[0] ? m_wd[11:0] : m_wd[27:16];
+                    ss_fwe <= 1'b1;
+                    if (m_step == 3'd1) begin
+                        ss_ack <= 1'b1;
+                        m_busy <= 1'b0;
+                    end
+                end else begin
+                    case (m_step)
+                        3'd0: ss_fa <= {m_fbw[15:0], 1'b0};
+                        3'd2: begin
+                            ss_rdata[31:16] <= {4'd0, fb_rdata};
+                            ss_fa <= {m_fbw[15:0], 1'b1};
+                        end
+                        3'd4: begin
+                            ss_rdata[15:0] <= {4'd0, fb_rdata};
+                            ss_ack <= 1'b1;
+                            m_busy <= 1'b0;
+                        end
+                        default: ;
+                    endcase
                 end
             end else begin
                 m_step <= m_step + 3'd1;
